@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CBAS - Cloud Backup & Storage Governance | Dropbox Platform</title>
+    <!-- Google Fonts: IBM Plex Sans (Lectura corporativa nítida) e IBM Plex Mono (Datos técnicos) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        rh: {
+                            red: '#EE0000',
+                            redHover: '#BE0000',
+                            dark: '#151515',
+                            bg: '#FBF9F9',
+                            surface: '#FFFFFF',
+                            containerLow: '#F5F3F3',
+                            border: '#E0E0E0',
+                            textPrimary: '#151515',
+                            textMuted: '#6A6E73',
+                            link: '#0066CC',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['"IBM Plex Sans"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+                        mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'IBM Plex Sans', sans-serif;
+            background-color: #FBF9F9;
+            color: #151515;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        .font-mono-tech {
+            font-family: 'IBM Plex Mono', ui-monospace, monospace;
+        }
+        .file-item-active {
+            border-left: 3px solid #EE0000;
+            background-color: #F5F3F3;
+        }
+        .nav-tab-active {
+            border-bottom: 2px solid #EE0000;
+            color: #151515;
+            font-weight: 600;
+        }
+        .nav-tab-inactive {
+            border-bottom: 2px solid transparent;
+            color: #6A6E73;
+        }
+        .nav-tab-inactive:hover {
+            color: #151515;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col bg-[#FBF9F9] text-[#151515]">
+
+    <!-- 1. Encabezado Limpio y Técnico (Red Hat style) -->
+    <header class="bg-white border-b border-[#E0E0E0] sticky top-0 z-30">
+        <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <span class="w-3.5 h-3.5 bg-[#EE0000] rounded-sm"></span>
+                <div>
+                    <h1 class="font-bold text-base text-[#151515] leading-tight tracking-tight">
+                        CBAS &mdash; Cloud Backup &amp; Storage Governance
+                    </h1>
+                    <p class="text-[11px] text-[#6A6E73]">
+                        Gestión Desatendida de Versiones y Auditoría con Dropbox Cloud API v2
+                    </p>
+                </div>
+            </div>
+
+            <!-- Telemetría Rápida y Botón Actualizar -->
+            <div class="flex items-center gap-3">
+                <div class="flex items-center gap-2 px-3 py-1.5 rounded-sm bg-[#F5F3F3] border border-[#E0E0E0] text-xs">
+                    <span id="punto-estado" class="w-2 h-2 rounded-full bg-emerald-600"></span>
+                    <span id="texto-estado-dropbox" class="font-medium text-[#151515]">Dropbox Conectado</span>
+                </div>
+                <button onclick="refrescarDatosManualmente()"
+                    class="px-3.5 py-1.5 rounded-sm border border-[#151515] bg-white hover:bg-[#F5F3F3] text-xs font-semibold text-[#151515] transition">
+                    Actualizar
+                </button>
+            </div>
+        </div>
+
+        <!-- Barra de Navegación Simple por Pestañas -->
+        <div class="bg-white border-t border-[#E0E0E0]">
+            <div class="max-w-7xl mx-auto px-6 flex items-center justify-between">
+                <nav class="flex gap-8 text-xs">
+                    <button id="tab-btn-boveda" onclick="cambiarPestana('boveda')"
+                        class="py-3 px-1 nav-tab-active transition">
+                        Bóveda y Versiones
+                    </button>
+                    <button id="tab-btn-auditoria" onclick="cambiarPestana('auditoria')"
+                        class="py-3 px-1 nav-tab-inactive transition">
+                        Pista de Auditoría de Red
+                    </button>
+                </nav>
+
+                <div class="hidden md:flex items-center gap-5 text-xs text-[#6A6E73] py-2">
+                    <div>Documentos: <strong id="resumen-archivos" class="text-[#151515]">0</strong></div>
+                    <div>Versiones: <strong id="resumen-versiones" class="text-[#151515]">0</strong></div>
+                    <div>Espacio en Nube: <strong id="resumen-espacio-nube" class="text-[#151515]">0 KB</strong></div>
+                    <div>Estación: <strong id="resumen-equipo" class="text-[#151515] font-mono-tech">-</strong></div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 2. Contenido Principal -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-6 py-6">
+
+        <!-- Banner de Avisos de Operación -->
+        <div id="banner-aviso" class="hidden mb-5 p-4 rounded-sm bg-white border border-[#E0E0E0] border-l-4 border-l-[#EE0000] text-xs shadow-sm flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <span class="font-bold text-[#EE0000]">ESTADO:</span>
+                <span id="banner-aviso-texto" class="text-[#151515]"></span>
+            </div>
+            <button onclick="ocultarAviso()" class="text-[#6A6E73] hover:text-[#151515] font-semibold text-[11px] uppercase">Cerrar</button>
+        </div>
+
+        <!-- ==================== PESTAÑA 1: BÓVEDA Y VERSIONES ==================== -->
+        <section id="vista-boveda" class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+            <!-- Columna Izquierda (4 col): Lista de Archivos en directorio_pyme -->
+            <div class="lg:col-span-4 bg-white border border-[#E0E0E0] rounded-sm shadow-sm overflow-hidden">
+                <div class="p-3.5 border-b border-[#E0E0E0] bg-[#F5F3F3] flex items-center justify-between">
+                    <div>
+                        <h2 class="font-bold text-xs uppercase tracking-wider text-[#151515]">Archivos Monitoreados</h2>
+                        <p class="text-[11px] text-[#6A6E73] mt-0.5">Carpeta local: <span id="header-carpeta" class="font-mono-tech">/directorio_pyme</span></p>
+                    </div>
+                    <span id="nav-count-archivos" class="text-xs font-bold px-2 py-0.5 rounded-sm bg-white border border-[#E0E0E0] text-[#151515]">0</span>
+                </div>
+
+                <div class="p-2.5 border-b border-[#E0E0E0]">
+                    <input id="input-buscar-archivo" type="text" oninput="filtrarListaArchivos()"
+                        placeholder="Buscar archivo por nombre..."
+                        class="w-full px-3 py-1.5 text-xs bg-[#FBF9F9] border border-[#E0E0E0] rounded-sm focus:outline-none focus:border-[#EE0000]">
+                </div>
+
+                <div id="lista-archivos-contenedor" class="divide-y divide-[#E0E0E0] max-h-[620px] overflow-y-auto">
+                    <!-- Inyectado por JS -->
+                </div>
+            </div>
+
+            <!-- Columna Derecha (8 col): Ficha Técnica del Archivo y sus Versiones -->
+            <div class="lg:col-span-8 space-y-5">
+
+                <!-- Ficha Principal del Archivo -->
+                <div class="bg-white border border-[#E0E0E0] rounded-sm p-5 shadow-sm space-y-5">
+
+                    <!-- Cabecera del Archivo Seleccionado -->
+                    <div class="flex flex-wrap items-start justify-between gap-4 pb-4 border-b border-[#E0E0E0]">
+                        <div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span id="ficha-badge-tipo" class="text-[10px] font-bold px-2 py-0.5 rounded-sm bg-[#151515] text-white uppercase tracking-wider">
+                                    Documento
+                                </span>
+                                <h2 id="detalle-nombre-archivo" class="font-bold text-lg text-[#151515]">
+                                    Seleccione un archivo
+                                </h2>
+                                <span id="detalle-version-actual-badge" class="text-xs font-bold px-2 py-0.5 rounded-sm bg-[#F5F3F3] border border-[#E0E0E0] text-[#151515]">
+                                    v1
+                                </span>
+                            </div>
+                            <p id="detalle-ruta-dropbox" class="text-xs font-mono-tech text-[#6A6E73] mt-1">
+                                /CBAS_Pyme_Vault/-
+                            </p>
+                        </div>
+
+                        <div class="text-right text-xs text-[#6A6E73] space-y-0.5">
+                            <div>Último respaldo: <strong id="detalle-ultima-fecha" class="text-[#151515] font-medium">-</strong></div>
+                            <div>Modificado por: <strong id="detalle-ultimo-autor" class="text-[#151515] font-mono-tech font-medium">-</strong></div>
+                        </div>
+                    </div>
+
+                    <!-- Línea de Tiempo de Versiones en Tarjetas -->
+                    <div>
+                        <div class="flex items-center justify-between mb-2.5">
+                            <h3 class="font-bold text-xs uppercase tracking-wider text-[#151515]">
+                                Historial de Versiones en la Nube
+                            </h3>
+                            <span class="text-[11px] text-[#6A6E73]">
+                                Seleccione una versión para ver sus metadatos o restaurarla
+                            </span>
+                        </div>
+                        <div id="contenedor-tarjetas-versiones" class="flex gap-2.5 overflow-x-auto pb-2 pt-0.5">
+                            <!-- Inyectado por JS -->
+                        </div>
+                    </div>
+
+                    <!-- Ficha Detallada de Metadatos de la Versión Elegida -->
+                    <div class="bg-[#F5F3F3] border border-[#E0E0E0] rounded-sm p-4 space-y-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <span id="ver-sel-titulo" class="font-bold text-sm text-[#151515]">Versión -</span>
+                                    <span id="ver-sel-operacion" class="text-[10px] font-bold px-2 py-0.5 rounded-sm bg-[#151515] text-white uppercase">-</span>
+                                </div>
+                                <p id="ver-sel-resumen" class="text-xs text-[#6A6E73] mt-0.5"></p>
+                            </div>
+
+                            <!-- Acciones de Recuperación Directa -->
+                            <div class="flex items-center gap-2">
+                                <a id="btn-descargar-version" href="#" target="_blank"
+                                    class="px-3.5 py-1.5 rounded-sm bg-white hover:bg-[#FAF8F8] border border-[#151515] text-xs font-semibold text-[#151515] transition shadow-sm">
+                                    Descargar copia de esta versión
+                                </a>
+                                <button id="btn-restaurar-version" onclick="restaurarVersionSeleccionada()"
+                                    class="px-3.5 py-1.5 rounded-sm bg-[#EE0000] hover:bg-[#BE0000] text-xs font-semibold text-white transition shadow-sm">
+                                    Restaurar en carpeta local
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Metadatos de Red y Nube -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-3 border-t border-[#E0E0E0] text-xs">
+                            <div>
+                                <span class="block text-[10px] font-bold uppercase tracking-wider text-[#6A6E73]">ID Revisión rev</span>
+                                <span id="ver-sel-rev" class="font-mono-tech text-[#151515] font-semibold break-all">-</span>
+                            </div>
+                            <div>
+                                <span class="block text-[10px] font-bold uppercase tracking-wider text-[#6A6E73]">Hash SHA-256 (4 MB)</span>
+                                <span id="ver-sel-hash" class="font-mono-tech text-[#151515] break-all">-</span>
+                            </div>
+                            <div>
+                                <span class="block text-[10px] font-bold uppercase tracking-wider text-[#6A6E73]">Estación / IP Origen</span>
+                                <span id="ver-sel-usuario" class="font-mono-tech text-[#151515]">-</span>
+                            </div>
+                            <div>
+                                <span class="block text-[10px] font-bold uppercase tracking-wider text-[#6A6E73]">Tamaño y Fecha UTC</span>
+                                <span id="ver-sel-tamano" class="text-[#151515] font-semibold">-</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Visor de Contenido (si es texto) o Inspección de Documento Binario -->
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between">
+                            <h4 class="font-bold text-xs uppercase tracking-wider text-[#6A6E73]">
+                                Vista Previa del Documento
+                            </h4>
+                            <span id="etiqueta-formato-archivo" class="text-[11px] text-[#6A6E73]">Visualización</span>
+                        </div>
+                        <div class="border border-[#E0E0E0] rounded-sm bg-[#F5F3F3] p-4 max-h-72 overflow-y-auto">
+                            <pre id="pre-contenido-visor" class="font-mono-tech text-xs text-[#151515] whitespace-pre-wrap leading-relaxed select-text"></pre>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+        </section>
+
+        <!-- ==================== PESTAÑA 2: AUDITORÍA DE RED ==================== -->
+        <section id="vista-auditoria" class="hidden space-y-4">
+            <div class="bg-white border border-[#E0E0E0] rounded-sm shadow-sm overflow-hidden">
+                <div class="p-4 border-b border-[#E0E0E0] bg-[#F5F3F3] flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="font-bold text-sm text-[#151515]">
+                            Registro de Telemetría y Auditoría de Red
+                        </h2>
+                        <p class="text-xs text-[#6A6E73] mt-0.5">
+                            Pista inmutable conforme a estándares ISO/IEC 27001 (A.12.4) y COBIT
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs text-[#6A6E73] font-medium">Filtrar por archivo:</label>
+                        <select id="filtro-actividad-archivo" onchange="cargarActividad()"
+                            class="px-3 py-1.5 text-xs bg-white border border-[#E0E0E0] rounded-sm text-[#151515] focus:outline-none focus:border-[#EE0000]">
+                            <option value="">Todos los archivos</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="border-b border-[#E0E0E0] bg-[#FAF8F8] text-[11px] font-bold uppercase tracking-wider text-[#6A6E73]">
+                                <th class="py-3 px-4">Fecha y Hora (UTC)</th>
+                                <th class="py-3 px-3">Documento</th>
+                                <th class="py-3 px-3">Versión</th>
+                                <th class="py-3 px-3">Operación</th>
+                                <th class="py-3 px-3">Detalle / Tamaño</th>
+                                <th class="py-3 px-3">Estación &amp; IP</th>
+                                <th class="py-3 px-3">Código rev Dropbox</th>
+                                <th class="py-3 px-4 text-right">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tabla-actividad-body" class="divide-y divide-[#E0E0E0]">
+                            <!-- Inyectado por JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 3. Pie de Página Corporativo -->
+    <footer class="bg-white border-t border-[#E0E0E0] py-4 px-6 mt-auto">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between text-xs text-[#6A6E73] gap-4">
+            <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 bg-[#EE0000] rounded-sm"></span>
+                <span>CBAS &mdash; Computación en la Nube (UMSA)</span>
+            </div>
+            <div>
+                Infraestructura: <span class="font-semibold text-[#151515]">Dropbox Cloud Storage API v2</span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- 4. Lógica de Cliente JavaScript -->
+    <script>
+        let archivoActivo = null;
+        let numeroVersionSeleccionada = null;
+        let archivosLocales = [];
+        let versionesArchivoActivo = [];
+        let ultimoEventoIdConocido = 0;
+
+        function mostrarAviso(texto) {
+            const banner = document.getElementById('banner-aviso');
+            document.getElementById('banner-aviso-texto').textContent = texto;
+            banner.classList.remove('hidden');
+        }
+
+        function ocultarAviso() {
+            document.getElementById('banner-aviso').classList.add('hidden');
+        }
+
+        function cambiarPestana(nombre) {
+            const btnBoveda = document.getElementById('tab-btn-boveda');
+            const btnAuditoria = document.getElementById('tab-btn-auditoria');
+            const secBoveda = document.getElementById('vista-boveda');
+            const secAuditoria = document.getElementById('vista-auditoria');
+
+            if (nombre === 'boveda') {
+                btnBoveda.className = 'py-3 px-1 nav-tab-active transition';
+                btnAuditoria.className = 'py-3 px-1 nav-tab-inactive transition';
+                secBoveda.classList.remove('hidden');
+                secAuditoria.classList.add('hidden');
+            } else {
+                btnBoveda.className = 'py-3 px-1 nav-tab-inactive transition';
+                btnAuditoria.className = 'py-3 px-1 nav-tab-active transition';
+                secBoveda.classList.add('hidden');
+                secAuditoria.classList.remove('hidden');
+                cargarActividad();
+            }
+        }
+
+        function formatearTamanoBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function obtenerEtiquetaTipoArchivo(nombre) {
+            const ext = nombre.split('.').pop().toLowerCase();
+            const mapa = {
+                'csv': 'Datos Contables CSV',
+                'json': 'Configuración JSON',
+                'md': 'Documento Markdown',
+                'txt': 'Texto Plano TXT',
+                'pdf': 'Documento PDF',
+                'docx': 'Documento Word DOCX',
+                'xlsx': 'Hoja de Cálculo XLSX',
+                'png': 'Imagen PNG',
+                'jpg': 'Imagen JPG'
+            };
+            return mapa[ext] || `Archivo .${ext}`;
+        }
+
+        async function cargarEstadoGeneral() {
+            try {
+                const res = await fetch('/api/status');
+                if (!res.ok) return;
+                const data = await res.json();
+
+                const pEstado = document.getElementById('punto-estado');
+                const tEstado = document.getElementById('texto-estado-dropbox');
+                if (data.dropbox && data.dropbox.conectado) {
+                    pEstado.className = 'w-2 h-2 rounded-full bg-emerald-600';
+                    tEstado.textContent = `Dropbox: ${data.dropbox.nombre_mostrar}`;
+                } else {
+                    pEstado.className = 'w-2 h-2 rounded-full bg-[#EE0000]';
+                    tEstado.textContent = 'Dropbox: Sin conexión';
+                }
+
+                document.getElementById('header-carpeta').textContent = data.directorio_monitoreado;
+                document.getElementById('resumen-equipo').textContent =
+                    `${data.estacion_local.usuario_so} (${data.estacion_local.direccion_ip})`;
+                document.getElementById('resumen-archivos').textContent = data.resumen.total_archivos;
+                document.getElementById('resumen-versiones').textContent = data.resumen.total_versiones;
+                document.getElementById('resumen-espacio-nube').textContent = formatearTamanoBytes(data.resumen.bytes_totales || 0);
+
+                document.getElementById('nav-count-archivos').textContent = data.resumen.total_archivos;
+
+                if (ultimoEventoIdConocido === 0) {
+                    ultimoEventoIdConocido = data.resumen.ultimo_evento_id;
+                }
+            } catch (err) {
+                console.error("Error al cargar estado:", err);
+            }
+        }
+
+        async function cargarListaArchivos(preservar = true) {
+            try {
+                const res = await fetch('/api/files');
+                if (!res.ok) return;
+                const data = await res.json();
+                archivosLocales = data.archivos;
+
+                renderizarListaArchivos();
+                actualizarSelectorActividad();
+
+                if (!archivoActivo && archivosLocales.length > 0) {
+                    await seleccionarArchivo(archivosLocales[0].nombre_archivo);
+                } else if (archivoActivo && !preservar) {
+                    await seleccionarArchivo(archivoActivo);
+                }
+            } catch (err) {
+                console.error("Error cargando archivos:", err);
+            }
+        }
+
+        function renderizarListaArchivos() {
+            const contenedor = document.getElementById('lista-archivos-contenedor');
+            const filtro = (document.getElementById('input-buscar-archivo').value || '').toLowerCase();
+            contenedor.innerHTML = '';
+
+            const filtrados = archivosLocales.filter(a => a.nombre_archivo.toLowerCase().includes(filtro));
+            if (filtrados.length === 0) {
+                contenedor.innerHTML = '<div class="p-4 text-xs text-[#6A6E73] text-center">No se encontraron archivos.</div>';
+                return;
+            }
+
+            filtrados.forEach(arc => {
+                const esSel = arc.nombre_archivo === archivoActivo;
+                const item = document.createElement('div');
+                item.className = `p-3 flex items-center justify-between cursor-pointer transition ${
+                    esSel ? 'file-item-active' : 'hover:bg-[#FAF8F8]'
+                }`;
+                item.onclick = () => seleccionarArchivo(arc.nombre_archivo);
+
+                const tipo = obtenerEtiquetaTipoArchivo(arc.nombre_archivo);
+                item.innerHTML = `
+                    <div class="min-w-0 pr-2">
+                        <div class="font-semibold text-xs text-[#151515] truncate">${arc.nombre_archivo}</div>
+                        <div class="text-[11px] text-[#6A6E73] mt-0.5">${tipo} &middot; ${formatearTamanoBytes(arc.tamano_bytes)}</div>
+                    </div>
+                    <span class="text-xs font-bold px-2 py-0.5 rounded-sm bg-white border border-[#E0E0E0] text-[#151515]">
+                        v${arc.version_actual}
+                    </span>
+                `;
+                contenedor.appendChild(item);
+            });
+        }
+
+        function filtrarListaArchivos() {
+            renderizarListaArchivos();
+        }
+
+        function actualizarSelectorActividad() {
+            const sel = document.getElementById('filtro-actividad-archivo');
+            const actual = sel.value;
+            sel.innerHTML = '<option value="">Todos los archivos</option>';
+            archivosLocales.forEach(a => {
+                const opt = document.createElement('option');
+                opt.value = a.nombre_archivo;
+                opt.textContent = a.nombre_archivo;
+                sel.appendChild(opt);
+            });
+            sel.value = actual;
+        }
+
+        async function seleccionarArchivo(nombre, forzarVersion = null) {
+            archivoActivo = nombre;
+            renderizarListaArchivos();
+
+            try {
+                const res = await fetch(`/api/files/${encodeURIComponent(nombre)}/versions`);
+                if (!res.ok) return;
+                const data = await res.json();
+                versionesArchivoActivo = data.versiones;
+
+                document.getElementById('detalle-nombre-archivo').textContent = data.nombre_archivo;
+                document.getElementById('detalle-version-actual-badge').textContent = `v${data.archivo.version_actual}`;
+                document.getElementById('detalle-ruta-dropbox').textContent = data.archivo.ruta_dropbox;
+                document.getElementById('detalle-ultima-fecha').textContent = data.archivo.ultima_modificacion_utc;
+                document.getElementById('detalle-ultimo-autor').textContent =
+                    `${data.archivo.ultimo_usuario_so} (${data.archivo.ultima_ip})`;
+
+                document.getElementById('ficha-badge-tipo').textContent = obtenerEtiquetaTipoArchivo(data.nombre_archivo);
+
+                if (forzarVersion !== null) {
+                    numeroVersionSeleccionada = forzarVersion;
+                } else if (!numeroVersionSeleccionada || !versionesArchivoActivo.some(v => v.numero_version === numeroVersionSeleccionada)) {
+                    numeroVersionSeleccionada = versionesArchivoActivo[0].numero_version;
+                }
+
+                renderizarTarjetasVersiones();
+                await cargarDetalleVersionSeleccionada();
+            } catch (err) {
+                console.error("Error al seleccionar archivo:", err);
+            }
+        }
+
+        function renderizarTarjetasVersiones() {
+            const contenedor = document.getElementById('contenedor-tarjetas-versiones');
+            contenedor.innerHTML = '';
+            const maxVersion = versionesArchivoActivo.length > 0 ? versionesArchivoActivo[0].numero_version : 1;
+
+            versionesArchivoActivo.forEach(ver => {
+                const esSel = ver.numero_version === numeroVersionSeleccionada;
+                const esActual = ver.numero_version === maxVersion;
+
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.onclick = () => seleccionarVersion(ver.numero_version);
+
+                card.className = `flex-shrink-0 text-left p-2.5 rounded-sm border transition min-w-[170px] ${
+                    esSel
+                        ? 'border-[#151515] bg-[#151515] text-white shadow-sm'
+                        : 'border-[#E0E0E0] bg-white hover:border-[#151515] text-[#151515]'
+                }`;
+
+                const badgeActual = esActual
+                    ? `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase ${
+                        esSel ? 'bg-[#EE0000] text-white' : 'bg-[#151515] text-white'
+                    }">Actual</span>`
+                    : '';
+
+                card.innerHTML = `
+                    <div class="flex items-center justify-between gap-1">
+                        <span class="font-bold text-xs">Versión v${ver.numero_version}</span>
+                        ${badgeActual}
+                    </div>
+                    <div class="text-[11px] truncate mt-1 ${esSel ? 'text-zinc-300' : 'text-[#6A6E73]'}">
+                        ${ver.tipo_operacion} &middot; ${formatearTamanoBytes(ver.tamano_bytes)}
+                    </div>
+                    <div class="text-[10px] font-mono-tech truncate mt-1 ${esSel ? 'text-zinc-400' : 'text-[#6A6E73]'}">
+                        rev: ${ver.rev_dropbox.substring(0, 12)}...
+                    </div>
+                    <div class="text-[10px] mt-0.5 ${esSel ? 'text-zinc-400' : 'text-[#6A6E73]'}">
+                        ${ver.fecha_registro_utc}
+                    </div>
+                `;
+                contenedor.appendChild(card);
+            });
+        }
+
+        async function seleccionarVersion(numVer) {
+            numeroVersionSeleccionada = numVer;
+            renderizarTarjetasVersiones();
+            await cargarDetalleVersionSeleccionada();
+        }
+
+        async function cargarDetalleVersionSeleccionada() {
+            if (!archivoActivo || !numeroVersionSeleccionada) return;
+
+            const url = `/api/files/${encodeURIComponent(archivoActivo)}/diff?version=${numeroVersionSeleccionada}&compare_to=prev`;
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const data = await res.json();
+
+            const ver = data.version_seleccionada;
+            const maxVersion = versionesArchivoActivo.length > 0 ? versionesArchivoActivo[0].numero_version : ver.numero_version;
+            const esActual = ver.numero_version === maxVersion;
+
+            document.getElementById('ver-sel-titulo').textContent =
+                `Versión v${ver.numero_version}` + (esActual ? ' (En disco local)' : ' (Copia en Dropbox)');
+            document.getElementById('ver-sel-operacion').textContent = ver.tipo_operacion;
+            document.getElementById('ver-sel-resumen').textContent = ver.detalle_operacion || ver.resumen_cambio;
+
+            document.getElementById('ver-sel-rev').textContent = ver.rev_dropbox;
+            document.getElementById('ver-sel-hash').textContent = ver.content_hash ? `${ver.content_hash.substring(0, 24)}...` : '-';
+            document.getElementById('ver-sel-usuario').textContent = `${ver.usuario_so} (${ver.direccion_ip})`;
+            document.getElementById('ver-sel-tamano').textContent = `${formatearTamanoBytes(ver.tamano_bytes)} (${ver.fecha_registro_utc})`;
+
+            // Enlace de descarga directa
+            const btnDescarga = document.getElementById('btn-descargar-version');
+            btnDescarga.href = `/api/files/${encodeURIComponent(archivoActivo)}/versions/${encodeURIComponent(ver.rev_dropbox)}/download`;
+
+            // Botón de restauración
+            const btnRestaurar = document.getElementById('btn-restaurar-version');
+            if (esActual) {
+                btnRestaurar.textContent = 'Reaplicar versión actual';
+            } else {
+                btnRestaurar.textContent = `Restaurar v${ver.numero_version} en carpeta local`;
+            }
+
+            // Visor de Contenido
+            const preVisor = document.getElementById('pre-contenido-visor');
+            const etqFormato = document.getElementById('etiqueta-formato-archivo');
+
+            if (ver.es_texto && data.contenido_texto !== null) {
+                etqFormato.textContent = 'Texto plano / datos estructurados';
+                preVisor.textContent = data.contenido_texto;
+            } else if (ver.es_texto) {
+                etqFormato.textContent = 'Texto de gran tamaño (>512 KB)';
+                preVisor.textContent = `Archivo de texto (${ver.tamano_bytes} bytes). Utilice "Descargar copia de esta versión" para abrirlo completo.`;
+            } else {
+                etqFormato.textContent = 'Documento Binario (Word, PDF, Excel)';
+                preVisor.textContent = `Documento Binario (${ver.tamano_bytes} bytes).\n\nIdentificador único Dropbox: ${ver.rev_dropbox}\nFirma SHA-256 (bloques de 4 MB): ${ver.content_hash}\n\nEste documento está respaldado en Dropbox. Puede descargar esta versión histórica o restaurarla en la carpeta local con los botones superiores.`;
+            }
+        }
+
+        async function restaurarVersionSeleccionada() {
+            if (!archivoActivo || !numeroVersionSeleccionada) return;
+            const verObj = versionesArchivoActivo.find(v => v.numero_version === numeroVersionSeleccionada);
+            if (!verObj) return;
+
+            mostrarAviso(`Restaurando ${archivoActivo} a la Versión v${verObj.numero_version} desde Dropbox...`);
+
+            try {
+                const res = await fetch('/api/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        nombre_archivo: archivoActivo,
+                        rev: verObj.rev_dropbox,
+                        numero_version: verObj.numero_version
+                    })
+                });
+                const data = await res.json();
+                if (res.ok && data.ok) {
+                    await cargarEstadoGeneral();
+                    await seleccionarArchivo(archivoActivo, data.nueva_version.numero_version);
+                    mostrarAviso(`Documento ${archivoActivo} restaurado con éxito en la carpeta local. Se registró la Versión v${data.nueva_version.numero_version}.`);
+                } else {
+                    mostrarAviso(`Aviso: ${data.error || 'No se pudo completar la restauración'}`);
+                }
+            } catch (err) {
+                mostrarAviso(`Error de conexión: ${err}`);
+            }
+        }
+
+        async function cargarActividad() {
+            const filtro = document.getElementById('filtro-actividad-archivo').value;
+            const url = filtro ? `/api/activity?archivo=${encodeURIComponent(filtro)}` : '/api/activity';
+
+            try {
+                const res = await fetch(url);
+                if (!res.ok) return;
+                const data = await res.json();
+                const tbody = document.getElementById('tabla-actividad-body');
+                tbody.innerHTML = '';
+
+                data.eventos.forEach(ev => {
+                    const tr = document.createElement('tr');
+                    tr.className = 'hover:bg-[#FAF8F8] transition';
+                    tr.innerHTML = `
+                        <td class="py-3 px-4 font-mono-tech text-[#6A6E73] whitespace-nowrap">${ev.fecha_registro_utc}</td>
+                        <td class="py-3 px-3 font-semibold text-[#151515]">${ev.nombre_archivo}</td>
+                        <td class="py-3 px-3">
+                            <span class="px-2 py-0.5 rounded-sm bg-[#F5F3F3] border border-[#E0E0E0] font-bold text-[#151515]">
+                                v${ev.numero_version}
+                            </span>
+                        </td>
+                        <td class="py-3 px-3 font-semibold ${ev.tipo_operacion === 'RESTAURADO' ? 'text-[#EE0000]' : 'text-[#151515]'}">
+                            ${ev.tipo_operacion}
+                        </td>
+                        <td class="py-3 px-3 text-[#6A6E73]">${ev.resumen_cambio}</td>
+                        <td class="py-3 px-3 text-[#6A6E73]">
+                            <div>${ev.usuario_so}</div>
+                            <div class="text-[11px] font-mono-tech text-[#6A6E73]">${ev.direccion_ip} (${ev.nombre_equipo})</div>
+                        </td>
+                        <td class="py-3 px-3 font-mono-tech text-[#6A6E73]">${ev.rev_dropbox.substring(0, 16)}...</td>
+                        <td class="py-3 px-4 text-right whitespace-nowrap">
+                            <button onclick="irAVersionDesdeActividad('${ev.nombre_archivo}', ${ev.numero_version})"
+                                class="px-3 py-1 rounded-sm border border-[#151515] bg-white hover:bg-[#F5F3F3] text-[#151515] font-semibold text-xs transition">
+                                Ver Ficha
+                            </button>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (err) {
+                console.error("Error al cargar actividad:", err);
+            }
+        }
+
+        async function irAVersionDesdeActividad(nombre, ver) {
+            cambiarPestana('boveda');
+            await seleccionarArchivo(nombre, ver);
+        }
+
+        async function refrescarDatosManualmente() {
+            await cargarEstadoGeneral();
+            await cargarListaArchivos(true);
+            if (!document.getElementById('vista-auditoria').classList.contains('hidden')) {
+                await cargarActividad();
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            const params = new URLSearchParams(window.location.search);
+            const tabParam = params.get('tab');
+            const archivoParam = params.get('archivo');
+            const verParam = params.get('version') ? parseInt(params.get('version'), 10) : null;
+
+            await cargarEstadoGeneral();
+            await cargarListaArchivos(true);
+
+            if (archivoParam) {
+                await seleccionarArchivo(archivoParam, verParam);
+            }
+
+            if (tabParam === 'auditoria') {
+                cambiarPestana('auditoria');
+            }
+        });
+    </script>
+</body>
+</html>

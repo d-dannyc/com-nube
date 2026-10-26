@@ -1,0 +1,5 @@
+fecha,codigo_cuenta,concepto,area_responsable,debe_bs,haber_bs,saldo_bs
+2026-10-01,1101-01,Apertura Caja General Octubre,Contabilidad,185000.00,0.00,185000.00
+2026-10-08,4102-04,Cobro Factura 4082 Cliente Corporativo,Ventas,64500.00,0.00,249500.00
+2026-10-15,5201-09,Pago Proveedores Materia Prima,Adquisiciones,0.00,42300.00,207200.00
+2026-10-20,5104-02,Provision Planilla Octubre 2026,Recursos Humanos,0.00,58900.00,148300.00

@@ -1,0 +1,81 @@
+# ==========================================
+# CBAS (Cloud Backup & Audit System)
+# Git Ignore Configuration
+# ==========================================
+
+# 1. Variables de entorno y secretos criticos
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.token
+*.secret
+
+# 2. Herramientas de Inteligencia Artificial y Agentes
+.agents/
+skills-lock.json
+.gemini/
+.claude/
+.cursor/
+.windsurf/
+
+# 3. Entornos virtuales y paquetes de Python
+venv/
+env/
+ENV/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+
+# 4. Bases de datos locales de auditoria y logs en tiempo real
+*.db
+*.sqlite
+*.sqlite3
+cbas_audit.db
+cbas_auditoria.db
+*.log
+*.pid
+
+# 5. Archivos temporales y de bloqueo ofimaticos (Word, LibreOffice, Excel)
+.~lock.*
+~$*
+*.tmp
+*.swp
+*.swo
+*~
+
+# 6. Configuraciones de IDEs y editores
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# 7. Archivos de sistema operativo
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

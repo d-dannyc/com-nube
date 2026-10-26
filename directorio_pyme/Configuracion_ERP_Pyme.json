@@ -1,0 +1,9 @@
+{
+    "empresa": "Comercial Andina S.R.L.",
+    "nit": "3849201015",
+    "ciudad": "La Paz",
+    "moneda_base": "BOB",
+    "impuesto_iva_porcentaje": 13,
+    "respaldo_nube_activo": true,
+    "carpeta_dropbox": "/CBAS_Pyme_Vault"
+}

@@ -1,0 +1,5 @@
+id_empleado,nombre_completo,cargo,departamento,haber_basico_bs,liquido_pagable_bs
+EMP-101,Saul Mijael Choquehuanca Huanca,Responsable de Operaciones TI,Sistemas,9800.00,9126.00
+EMP-102,Carlos Daniel Quispe Chambi,Administrador de Infraestructura,Sistemas,9500.00,8845.00
+EMP-103,Victor Bernardo Quispe Rojas,Contador General,Contabilidad,8900.00,8275.00
+EMP-104,Gabriel Yujra Machaca,Analista Administrativo,Administracion,8600.00,7980.00
