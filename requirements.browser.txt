@@ -1,0 +1,2 @@
+# Opcional: pruebas de interfaz, no necesario para usar CBAS.
+playwright==1.64.1
