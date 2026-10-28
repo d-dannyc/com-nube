@@ -12,6 +12,8 @@ import io
 import json
 from pathlib import Path
 from flask import Flask, jsonify, request, render_template, send_file
+from werkzeug.exceptions import HTTPException
+from cbas.validation import validar_nombre, validar_revision
 
 from cbas.config import (
     MONITORED_DIR,
@@ -29,6 +31,8 @@ from cbas.database import (
     guardar_snapshot_texto_en_version,
     listar_actividad_reciente,
     obtener_resumen_sistema,
+    MAX_TEXT_SNAPSHOT_BYTES,
+    leer_snapshot_texto,
 )
 from cbas.dropbox_service import (
     verificar_cuenta_dropbox,
@@ -39,9 +43,50 @@ from cbas.agent import (
     sincronizar_archivo_guardado,
     registrar_hash_sincronizado,
     es_archivo_temporal_o_ignorado,
+    obtener_estado_sincronizacion,
+    bloqueo_archivo,
+    confirmar_auditoria_pendiente,
+    PENDIENTES_AUDITORIA,
 )
 
 app = Flask(__name__, template_folder="templates")
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024
+
+
+@app.before_request
+def validar_rutas_api():
+    argumentos = request.view_args or {}
+    if 'nombre_archivo' in argumentos:
+        validar_nombre(argumentos['nombre_archivo'], MONITORED_DIR)
+    if 'rev' in argumentos:
+        validar_revision(argumentos['rev'])
+
+
+@app.errorhandler(ValueError)
+def error_validacion(exc):
+    return jsonify(error=str(exc)), 400
+
+
+@app.errorhandler(HTTPException)
+def error_http(exc):
+    return jsonify(error={400: 'Solicitud o JSON no válido.', 404: 'Recurso no encontrado.',
+                          413: 'La solicitud excede el tamaño permitido.'}.get(exc.code, exc.name)), exc.code
+
+
+@app.errorhandler(Exception)
+def error_inesperado(exc):
+    app.logger.error('Operación fallida: %s', type(exc).__name__)
+    return jsonify(error='No se pudo completar la operación. Comprueba Dropbox y vuelve a intentar.'), 503
+
+
+def entero_positivo(valor, nombre, maximo=None):
+    try:
+        numero = int(valor)
+    except (ValueError, TypeError):
+        raise ValueError(f'{nombre} debe ser un entero positivo.') from None
+    if numero < 1 or (maximo and numero > maximo):
+        raise ValueError(f'{nombre} está fuera del rango permitido.')
+    return numero
 
 ARCHIVOS_INICIALES_CARPETA = {
     "Balance_Contable_2026.csv": (
@@ -116,7 +161,8 @@ def obtener_texto_de_version(version_dict: dict) -> str | None:
     Obtiene el texto de una version desde la base de datos local;
     si no estuviera en cache y el archivo es de texto, lo descarga de Dropbox por su rev y lo guarda.
     """
-    if not version_dict.get("es_texto"):
+    if (not version_dict.get("es_texto")
+            or version_dict['tamano_bytes'] > MAX_TEXT_SNAPSHOT_BYTES):
         return None
     if version_dict.get("contenido_texto") is not None:
         return version_dict["contenido_texto"]
@@ -129,7 +175,7 @@ def obtener_texto_de_version(version_dict: dict) -> str | None:
         guardar_snapshot_texto_en_version(version_dict["id"], texto)
         return texto
     except Exception:
-        return None
+        raise RuntimeError('No se pudo recuperar el contenido de esta revisión.') from None
 
 
 @app.route("/")
@@ -146,7 +192,7 @@ def api_estado_sistema():
     except Exception as exc:
         cuenta_dropbox = {
             "conectado": False,
-            "error": str(exc),
+            "error": "Comprueba las credenciales, los permisos de la aplicación y la conexión.",
             "nombre_mostrar": "Sin conexion",
             "email": "-",
         }
@@ -157,22 +203,13 @@ def api_estado_sistema():
             "estacion_local": estacion,
             "dropbox": cuenta_dropbox,
             "directorio_monitoreado": str(MONITORED_DIR),
+            "sincronizacion": obtener_estado_sincronizacion(),
         }
     )
 
 
 @app.route("/api/files", methods=["GET"])
 def api_listar_archivos():
-    # Escaneo rapido por si se agrego un archivo nuevo a directorio_pyme
-    if MONITORED_DIR.exists():
-        for ruta in sorted(MONITORED_DIR.iterdir()):
-            if ruta.is_file() and not es_archivo_temporal_o_ignorado(ruta):
-                if obtener_archivo_por_nombre(ruta.name) is None:
-                    try:
-                        sincronizar_archivo_guardado(ruta)
-                    except Exception:
-                        pass
-
     archivos = listar_archivos_monitoreados()
     return jsonify({"archivos": archivos})
 
@@ -214,7 +251,7 @@ def api_comparar_version_archivo(nombre_archivo: str):
     modo_comparacion = request.args.get("compare_to", "prev")
 
     if num_solicitado:
-        ver_objetivo = obtener_version_especifica(nombre_archivo, numero_version=int(num_solicitado))
+        ver_objetivo = obtener_version_especifica(nombre_archivo, numero_version=entero_positivo(num_solicitado, 'version'))
     else:
         ver_objetivo = obtener_version_especifica(
             nombre_archivo, numero_version=versiones[0]["numero_version"]
@@ -232,19 +269,20 @@ def api_comparar_version_archivo(nombre_archivo: str):
             ver_base = obtener_version_especifica(nombre_archivo, numero_version=num_obj - 1)
     elif modo_comparacion == "current":
         num_actual = int(versiones[0]["numero_version"])
-        if num_actual != num_obj:
-            ver_base = obtener_version_especifica(nombre_archivo, numero_version=num_actual)
+        ver_base = obtener_version_especifica(nombre_archivo, numero_version=num_actual)
     else:
-        try:
-            ver_base = obtener_version_especifica(nombre_archivo, numero_version=int(modo_comparacion))
-        except ValueError:
-            ver_base = None
+        ver_base = obtener_version_especifica(nombre_archivo, numero_version=entero_positivo(modo_comparacion, 'compare_to'))
+        if ver_base is None:
+            return jsonify(error='La versión de comparación no existe.'), 404
 
     es_texto = bool(ver_objetivo["es_texto"])
     texto_objetivo = obtener_texto_de_version(ver_objetivo) if es_texto else None
     texto_base = obtener_texto_de_version(ver_base) if (ver_base and es_texto) else None
 
     resultado_diff = calcular_resumen_y_diff(texto_base, texto_objetivo)
+    if es_texto and (texto_objetivo is None or (ver_base and texto_base is None)):
+        resultado_diff = dict(es_texto=True, lineas_diff=[], lineas_agregadas=0,
+                              lineas_eliminadas=0, resumen='Comparación no disponible: límite de 512 KiB.')
 
     return jsonify(
         {
@@ -285,6 +323,8 @@ def api_descargar_version_especifica(nombre_archivo: str, rev: str):
     sin necesidad de restaurarla ni sobrescribir el archivo local en directorio_pyme/.
     """
     ver_local = obtener_version_especifica(nombre_archivo, rev_dropbox=rev)
+    if not ver_local:
+        return jsonify(error='La revisión no está registrada para este archivo.'), 404
     num_v = ver_local["numero_version"] if ver_local else "hist"
 
     ruta_p = Path(nombre_archivo)
@@ -294,10 +334,8 @@ def api_descargar_version_especifica(nombre_archivo: str, rev: str):
     try:
         contenido_bytes, _ = descargar_bytes_version(nombre_archivo, rev=rev)
     except Exception as exc:
-        if ver_local and ver_local.get("contenido_texto") is not None:
-            contenido_bytes = ver_local["contenido_texto"].encode("utf-8")
-        else:
-            return jsonify({"error": f"No se pudo descargar la version desde Dropbox: {exc}"}), 500
+        # Una instantánea UTF-8 puede no conservar los bytes originales.
+        raise RuntimeError('No se pudo descargar la versión exacta desde Dropbox.') from None
 
     buffer = io.BytesIO(contenido_bytes)
     buffer.seek(0)
@@ -314,33 +352,39 @@ def api_restaurar_version():
     """
     Restaura una version seleccionada en la carpeta local directorio_pyme/ y en Dropbox.
     """
-    datos = request.get_json(force=True)
+    datos = request.get_json(silent=True)
+    if not isinstance(datos, dict):
+        return jsonify(error='Envía un objeto JSON válido.'), 400
     nombre_archivo = datos.get("nombre_archivo")
     rev_objetivo = datos.get("rev")
-    num_version_origen = datos.get("numero_version")
+    validar_nombre(nombre_archivo, MONITORED_DIR)
+    validar_revision(rev_objetivo)
+    origen = obtener_version_especifica(nombre_archivo, rev_dropbox=rev_objetivo)
+    if not origen:
+        return jsonify(error='La revisión no está registrada para este archivo.'), 404
+    if datos.get('numero_version') is not None:
+        if entero_positivo(datos['numero_version'], 'numero_version') != origen['numero_version']:
+            return jsonify(error='La revisión no corresponde al número de versión.'), 400
+    with bloqueo_archivo(nombre_archivo):
+        confirmar_auditoria_pendiente(nombre_archivo)
+        return _restaurar_version(nombre_archivo, rev_objetivo, origen['numero_version'], bool(origen['es_texto']))
 
-    if not nombre_archivo or not rev_objetivo:
-        return jsonify({"error": "Debe indicar nombre_archivo y rev."}), 400
+
+def _restaurar_version(nombre_archivo, rev_objetivo, num_version_origen, es_txt):
 
     try:
         restaurado = restaurar_version_en_carpeta(nombre_archivo, rev_objetivo)
     except Exception as exc:
-        return jsonify({"error": f"Error al restaurar desde Dropbox API: {exc}"}), 500
+        raise RuntimeError('No se pudo restaurar desde Dropbox.') from None
 
-    # Registrar el nuevo content_hash para que Watchdog no duplique el evento
-    registrar_hash_sincronizado(nombre_archivo, restaurado["content_hash"])
-
-    ruta_local = MONITORED_DIR / nombre_archivo
-    es_txt = es_archivo_texto(ruta_local)
-    texto_recuperado = (
-        ruta_local.read_text(encoding="utf-8", errors="replace") if es_txt else None
-    )
+    contenido = restaurado.pop('_contenido')
+    texto_recuperado = (contenido.decode('utf-8', errors='replace')
+                        if es_txt and len(contenido) <= MAX_TEXT_SNAPSHOT_BYTES else None)
 
     estacion = obtener_metadatos_estacion()
     etiqueta_origen = f"v{num_version_origen} ({rev_objetivo[:10]})" if num_version_origen else rev_objetivo
 
-    nueva_ver = registrar_nueva_version(
-        {
+    PENDIENTES_AUDITORIA[nombre_archivo] = {
             "nombre_archivo": nombre_archivo,
             "ruta_dropbox": restaurado["ruta_dropbox"],
             "dropbox_file_id": restaurado["dropbox_file_id"],
@@ -356,7 +400,7 @@ def api_restaurar_version():
             "contenido_texto": texto_recuperado,
             "detalle_operacion": f"Restaurado al contenido de la version {etiqueta_origen}.",
         }
-    )
+    nueva_ver = confirmar_auditoria_pendiente(nombre_archivo)
 
     return jsonify(
         {
@@ -370,6 +414,8 @@ def api_restaurar_version():
 @app.route("/api/activity", methods=["GET"])
 def api_registro_actividad():
     archivo = request.args.get("archivo")
-    limite = int(request.args.get("limite", "100"))
+    if archivo:
+        validar_nombre(archivo)
+    limite = entero_positivo(request.args.get("limite", "100"), 'limite', 1000)
     eventos = listar_actividad_reciente(limite=limite, nombre_archivo=archivo)
     return jsonify({"eventos": eventos})

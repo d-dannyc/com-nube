@@ -9,8 +9,12 @@ Provee funciones para:
 
 from datetime import timezone
 from pathlib import Path
+import os
+import tempfile
 import dropbox
 from dropbox.files import WriteMode, ListRevisionsMode
+from cbas.validation import validar_nombre, validar_revision
+from cbas.hasher import calcular_hash_bytes
 
 from cbas.config import (
     DROPBOX_APP_KEY,
@@ -29,9 +33,11 @@ def obtener_cliente_dropbox() -> dropbox.Dropbox:
             oauth2_refresh_token=DROPBOX_REFRESH_TOKEN,
             app_key=DROPBOX_APP_KEY,
             app_secret=DROPBOX_APP_SECRET,
+            timeout=15,
+            max_retries_on_error=1,
         )
     if DROPBOX_ACCESS_TOKEN:
-        return dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
+        return dropbox.Dropbox(DROPBOX_ACCESS_TOKEN, timeout=15, max_retries_on_error=1)
     raise RuntimeError(
         "No se encontraron credenciales OAuth 2.0 validas en el archivo .env."
     )
@@ -55,11 +61,12 @@ def verificar_cuenta_dropbox() -> dict:
 
 
 def construir_ruta_dropbox(nombre_archivo: str) -> str:
-    limpio = nombre_archivo.lstrip("/")
+    limpio = validar_nombre(nombre_archivo)
     return f"{DROPBOX_VAULT_FOLDER}/{limpio}"
 
 
-def subir_version_archivo(ruta_local: str | Path, nombre_archivo: str | None = None) -> dict:
+def subir_version_archivo(ruta_local: str | Path, nombre_archivo: str | None = None,
+                          contenido: bytes | None = None) -> dict:
     """
     Sube un archivo local a Dropbox en modo WriteMode.overwrite para generar
     un nuevo identificador de revision (rev) conservando las versiones anteriores.
@@ -71,8 +78,10 @@ def subir_version_archivo(ruta_local: str | Path, nombre_archivo: str | None = N
     ruta_nube = construir_ruta_dropbox(nombre_archivo)
     dbx = obtener_cliente_dropbox()
 
-    with open(ruta_path, "rb") as f:
-        contenido = f.read()
+    if contenido is None:
+        contenido = ruta_path.read_bytes()
+    if len(contenido) > 150 * 1024 * 1024:
+        raise ValueError('El archivo excede 150 MiB; esta versión no implementa subida por sesiones.')
 
     metadata = dbx.files_upload(
         contenido,
@@ -80,6 +89,8 @@ def subir_version_archivo(ruta_local: str | Path, nombre_archivo: str | None = N
         mode=WriteMode.overwrite,
         mute=True,
     )
+    if metadata.content_hash != calcular_hash_bytes(contenido):
+        raise RuntimeError('Dropbox devolvió un hash distinto al contenido enviado.')
 
     fecha_utc = metadata.server_modified.replace(tzinfo=timezone.utc).strftime(
         "%Y-%m-%d %H:%M:%S UTC"
@@ -101,10 +112,15 @@ def descargar_bytes_version(nombre_archivo: str, rev: str | None = None) -> tupl
     Descarga desde Dropbox el contenido binario exacto de una version especifica (rev)
     sin modificar ni sobrescribir el archivo local en directorio_pyme.
     """
+    if rev is not None:
+        validar_revision(rev)
     ruta_nube = construir_ruta_dropbox(nombre_archivo)
     dbx = obtener_cliente_dropbox()
     metadata, response = dbx.files_download(ruta_nube, rev=rev)
-    contenido_bytes = response.content
+    try:
+        contenido_bytes = response.content
+    finally:
+        response.close()
     fecha_utc = metadata.server_modified.replace(tzinfo=timezone.utc).strftime(
         "%Y-%m-%d %H:%M:%S UTC"
     )
@@ -150,13 +166,25 @@ def restaurar_version_en_carpeta(nombre_archivo: str, rev_objetivo: str) -> dict
     Restaura el archivo en Dropbox al identificador rev elegido mediante files_restore
     y descarga el contenido restaurado directamente en directorio_pyme.
     """
+    validar_nombre(nombre_archivo, MONITORED_DIR)
+    validar_revision(rev_objetivo)
     ruta_nube = construir_ruta_dropbox(nombre_archivo)
     ruta_local_destino = MONITORED_DIR / nombre_archivo
     dbx = obtener_cliente_dropbox()
 
-    restaurado_meta = dbx.files_restore(ruta_nube, rev_objetivo)
     MONITORED_DIR.mkdir(parents=True, exist_ok=True)
-    dbx.files_download_to_file(str(ruta_local_destino), ruta_nube)
+    # Descargar y verificar ANTES de cambiar la versión activa o el archivo local.
+    fd, temporal = tempfile.mkstemp(prefix='.cbas-restore-', dir=MONITORED_DIR)
+    os.close(fd)
+    try:
+        dbx.files_download_to_file(temporal, ruta_nube, rev=rev_objetivo)
+        contenido = Path(temporal).read_bytes()
+        restaurado_meta = dbx.files_restore(ruta_nube, rev_objetivo)
+        if calcular_hash_bytes(contenido) != restaurado_meta.content_hash:
+            raise RuntimeError('La revisión descargada no coincide con el hash restaurado.')
+        os.replace(temporal, ruta_local_destino)
+    finally:
+        Path(temporal).unlink(missing_ok=True)
 
     fecha_utc = restaurado_meta.server_modified.replace(tzinfo=timezone.utc).strftime(
         "%Y-%m-%d %H:%M:%S UTC"
@@ -172,4 +200,5 @@ def restaurar_version_en_carpeta(nombre_archivo: str, rev_objetivo: str) -> dict
         "tamano_bytes": restaurado_meta.size,
         "fecha_servidor_utc": fecha_utc,
         "dropbox_file_id": restaurado_meta.id,
+        "_contenido": contenido,
     }

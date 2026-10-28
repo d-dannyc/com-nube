@@ -10,22 +10,49 @@ Vigila la carpeta asociada (directorio_pyme/) mediante Python Watchdog:
 
 import os
 import threading
+import time
 from pathlib import Path
+from datetime import datetime, timezone
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 from cbas.config import MONITORED_DIR, obtener_metadatos_estacion
-from cbas.hasher import calcular_content_hash_dropbox
+from cbas.hasher import calcular_hash_bytes
+from cbas.validation import validar_nombre
 from cbas.dropbox_service import subir_version_archivo
 from cbas.database import (
     es_archivo_texto,
-    leer_snapshot_texto,
     registrar_nueva_version,
     obtener_archivo_por_nombre,
+    MAX_TEXT_SNAPSHOT_BYTES,
 )
 
 HASHES_SINCRONIZADOS: dict[str, str] = {}
 LOCK_HASHES = threading.Lock()
+LOCKS_ARCHIVO = {}
+PENDIENTES_AUDITORIA = {}
+ESTADO = {'agente_activo': False, 'ultima_comprobacion_utc': None,
+          'pendientes': 0, 'fallidos': 0, 'errores': {}}
+
+
+def bloqueo_archivo(nombre):
+    with LOCK_HASHES:
+        return LOCKS_ARCHIVO.setdefault(nombre, threading.RLock())
+
+
+def obtener_estado_sincronizacion():
+    with LOCK_HASHES:
+        return {**ESTADO, 'errores': dict(ESTADO['errores'])}
+
+
+def confirmar_auditoria_pendiente(nombre):
+    datos = PENDIENTES_AUDITORIA.get(nombre)
+    if datos is None:
+        return None
+    resultado = registrar_nueva_version(datos)
+    registrar_hash_sincronizado(nombre, datos['content_hash'])
+    del PENDIENTES_AUDITORIA[nombre]
+    return resultado
 
 
 def registrar_hash_sincronizado(nombre_archivo: str, content_hash: str) -> None:
@@ -51,7 +78,15 @@ def es_archivo_temporal_o_ignorado(ruta: str | Path) -> bool:
     return nombre.lower().endswith(extensiones_ignoradas)
 
 
-def sincronizar_archivo_guardado(
+def sincronizar_archivo_guardado(ruta_archivo, tipo_operacion_forzada=None, detalle_personalizado=None):
+    ruta_archivo = Path(ruta_archivo)
+    validar_nombre(ruta_archivo.name, MONITORED_DIR)
+    with bloqueo_archivo(ruta_archivo.name):
+        recuperado = confirmar_auditoria_pendiente(ruta_archivo.name)
+        return _sincronizar_archivo(ruta_archivo, tipo_operacion_forzada, detalle_personalizado) or recuperado
+
+
+def _sincronizar_archivo(
     ruta_archivo: Path,
     tipo_operacion_forzada: str | None = None,
     detalle_personalizado: str | None = None,
@@ -69,7 +104,14 @@ def sincronizar_archivo_guardado(
     if es_archivo_temporal_o_ignorado(ruta_archivo):
         return None
 
-    hash_local = calcular_content_hash_dropbox(ruta_archivo)
+    antes = ruta_archivo.stat()
+    if antes.st_size > 150 * 1024 * 1024:
+        raise ValueError('Máximo admitido: 150 MiB por archivo.')
+    contenido = ruta_archivo.read_bytes()
+    despues = ruta_archivo.stat()
+    if (antes.st_mtime_ns, antes.st_size) != (despues.st_mtime_ns, despues.st_size):
+        raise RuntimeError('El archivo sigue cambiando; se reintentará.')
+    hash_local = calcular_hash_bytes(contenido)
     ultimo_hash = obtener_hash_sincronizado(nombre_archivo)
 
     if ultimo_hash == hash_local and tipo_operacion_forzada is None:
@@ -91,11 +133,11 @@ def sincronizar_archivo_guardado(
     else:
         tipo_operacion = "MODIFICADO"
 
-    es_texto = es_archivo_texto(ruta_archivo)
-    snapshot = leer_snapshot_texto(ruta_archivo) if es_texto else None
+    es_texto = es_archivo_texto(ruta_archivo, contenido)
+    snapshot = (contenido.decode('utf-8', errors='replace')
+                if es_texto and len(contenido) <= MAX_TEXT_SNAPSHOT_BYTES else None)
 
-    resultado_nube = subir_version_archivo(ruta_archivo, nombre_archivo)
-    registrar_hash_sincronizado(nombre_archivo, resultado_nube["content_hash"])
+    resultado_nube = subir_version_archivo(ruta_archivo, nombre_archivo, contenido=contenido)
 
     estacion = obtener_metadatos_estacion()
 
@@ -117,7 +159,8 @@ def sincronizar_archivo_guardado(
     if detalle_personalizado:
         datos_version["detalle_operacion"] = detalle_personalizado
 
-    return registrar_nueva_version(datos_version)
+    PENDIENTES_AUDITORIA[nombre_archivo] = datos_version
+    return confirmar_auditoria_pendiente(nombre_archivo)
 
 
 class ManejadorCarpetaCBAS(FileSystemEventHandler):
@@ -127,39 +170,15 @@ class ManejadorCarpetaCBAS(FileSystemEventHandler):
     para que cada guardado genere una unica version limpia.
     """
 
-    def __init__(self, delay_segundos: float = 1.0):
+    def __init__(self, despertar):
         super().__init__()
-        self.delay_segundos = delay_segundos
-        self.temporizadores: dict[str, threading.Timer] = {}
-        self.lock = threading.Lock()
+        self.despertar = despertar
 
     def _programar_sincronizacion(self, ruta_str: str) -> None:
         if es_archivo_temporal_o_ignorado(ruta_str):
             return
 
-        with self.lock:
-            if ruta_str in self.temporizadores:
-                self.temporizadores[ruta_str].cancel()
-
-            timer = threading.Timer(
-                self.delay_segundos,
-                self._ejecutar_sincronizacion,
-                args=(Path(ruta_str),),
-            )
-            timer.daemon = True
-            self.temporizadores[ruta_str] = timer
-            timer.start()
-
-    def _ejecutar_sincronizacion(self, ruta_archivo: Path) -> None:
-        try:
-            res = sincronizar_archivo_guardado(ruta_archivo)
-            if res:
-                print(
-                    f"[Agente CBAS] {res['nombre_archivo']} -> Version v{res['numero_version']} "
-                    f"(rev: {res['rev_dropbox']} | {res['resumen_cambio']})"
-                )
-        except Exception as exc:
-            print(f"[Agente CBAS] Error al sincronizar {ruta_archivo.name}: {exc}")
+        self.despertar.set()
 
     def on_created(self, event):
         if not event.is_directory:
@@ -174,12 +193,83 @@ class ManejadorCarpetaCBAS(FileSystemEventHandler):
             self._programar_sincronizacion(event.dest_path)
 
 
-def iniciar_observador_en_segundo_plano() -> Observer:
+def reconciliar_carpeta():
+    resultados, errores = [], {}
+    rutas = {p.name: p for p in MONITORED_DIR.iterdir()
+             if p.is_file() and not es_archivo_temporal_o_ignorado(p)}
+    for nombre in list(PENDIENTES_AUDITORIA):
+        rutas.setdefault(nombre, MONITORED_DIR / nombre)
+    with LOCK_HASHES:
+        ESTADO['pendientes'] = len(rutas)
+    for nombre, ruta in sorted(rutas.items()):
+        try:
+            resultado = sincronizar_archivo_guardado(ruta)
+            if resultado:
+                resultados.append(resultado)
+        except Exception:
+            errores[nombre] = 'Respaldo pendiente. Comprueba conexión, permisos y tamaño; se reintentará.'
+        finally:
+            with LOCK_HASHES:
+                ESTADO['pendientes'] -= 1
+    with LOCK_HASHES:
+        ESTADO.update(ultima_comprobacion_utc=datetime.now(timezone.utc).isoformat(),
+                      fallidos=len(errores), errores=errores)
+    return resultados
+
+
+class AgenteCBAS:
+    def __init__(self):
+        self.fin = threading.Event()
+        self.despertar = threading.Event()
+        self.observador = Observer()
+        self.observador.schedule(ManejadorCarpetaCBAS(self.despertar), str(MONITORED_DIR), recursive=False)
+        self.hilo = threading.Thread(target=self._ejecutar, daemon=True)
+
+    def start(self):
+        self.observador.start()
+        with LOCK_HASHES:
+            ESTADO['agente_activo'] = True
+        self.hilo.start()
+
+    def _ejecutar(self):
+        try:
+            while not self.fin.is_set():
+                self.despertar.clear()
+                try:
+                    MONITORED_DIR.mkdir(parents=True, exist_ok=True)
+                    reconciliar_carpeta()
+                except OSError:
+                    with LOCK_HASHES:
+                        ESTADO.update(fallidos=1, pendientes=0, errores={
+                            'carpeta': 'No se pudo leer la carpeta monitoreada. Comprueba su ubicación y permisos.'})
+                if self.despertar.wait(15):
+                    # ponytail: debounce de carpeta limitado a 15s; evita que un log
+                    # continuo bloquee los demás archivos. Estabilidad por archivo si crece la carga.
+                    limite = time.monotonic() + 15
+                    while not self.fin.is_set():
+                        restante = limite - time.monotonic()
+                        if restante <= 0:
+                            break
+                        self.despertar.clear()
+                        if not self.despertar.wait(min(1, restante)):
+                            break
+        finally:
+            with LOCK_HASHES:
+                ESTADO['agente_activo'] = False
+
+    def stop(self):
+        self.fin.set()
+        self.despertar.set()
+        self.observador.stop()
+
+    def join(self):
+        self.observador.join()
+        self.hilo.join(timeout=20)
+
+
+def iniciar_observador_en_segundo_plano():
     """Inicia el observador Watchdog sobre directorio_pyme/."""
     MONITORED_DIR.mkdir(parents=True, exist_ok=True)
-    manejador = ManejadorCarpetaCBAS(delay_segundos=1.0)
-    observador = Observer()
-    observador.schedule(manejador, str(MONITORED_DIR), recursive=False)
-    observador.daemon = True
-    observador.start()
-    return observador
+    agente = AgenteCBAS()
+    agente.start()
+    return agente

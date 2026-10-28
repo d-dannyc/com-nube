@@ -7,6 +7,7 @@ comparaciones de cambios (Diff estilo Git) de forma instantanea.
 
 import difflib
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from cbas.config import DATABASE_PATH
@@ -23,13 +24,18 @@ EXTENSIONES_BINARIAS = {
 MAX_TEXT_SNAPSHOT_BYTES = 512 * 1024  # 512 KB
 
 
-def obtener_conexion() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DATABASE_PATH), check_same_thread=False)
+@contextmanager
+def obtener_conexion():
+    conn = sqlite3.connect(str(DATABASE_PATH), timeout=15)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
-def es_archivo_texto(ruta_archivo: Path) -> bool:
+def es_archivo_texto(ruta_archivo: Path, contenido: bytes | None = None) -> bool:
     """Determina si un archivo es legible como texto plano para habilitar la comparacion de lineas (Diff)."""
     ext = ruta_archivo.suffix.lower()
     if ext in EXTENSIONES_BINARIAS:
@@ -37,7 +43,11 @@ def es_archivo_texto(ruta_archivo: Path) -> bool:
     if ext in EXTENSIONES_TEXTO:
         return True
     try:
-        muestra = ruta_archivo.read_bytes()[:2048]
+        if contenido is None:
+            with ruta_archivo.open('rb') as archivo:
+                muestra = archivo.read(2048)
+        else:
+            muestra = contenido[:2048]
         if b"\x00" in muestra:
             return False
         muestra.decode("utf-8")
