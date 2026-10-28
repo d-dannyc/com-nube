@@ -42,3 +42,4 @@ Abre **http://127.0.0.1:5050** y mantén la terminal abierta. Para detener el si
 Guarda los archivos directamente en `directorio_pyme/`: se respaldan automáticamente en Dropbox. Desde el panel puedes seleccionar un archivo y consultar, comparar, descargar o restaurar sus versiones. La restauración pide confirmación antes de reemplazar el archivo local.
 
 Para cambiar el puerto o la carpeta remota, consulta las variables de `.env.example`, agrégalas a `.env` y reinicia el programa.
+Los archivos `.docx` permiten previsualizar y comparar su texto principal, sin imágenes ni formato de Word. Si un documento está abierto y bloquea la restauración, ciérralo antes de restaurarlo.

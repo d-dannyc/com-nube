@@ -19,6 +19,7 @@ from watchdog.events import FileSystemEventHandler
 from cbas.config import MONITORED_DIR, obtener_metadatos_estacion
 from cbas.hasher import calcular_hash_bytes
 from cbas.validation import validar_nombre
+from cbas.documents import texto_docx
 from cbas.dropbox_service import subir_version_archivo
 from cbas.database import (
     es_archivo_texto,
@@ -136,6 +137,8 @@ def _sincronizar_archivo(
     es_texto = es_archivo_texto(ruta_archivo, contenido)
     snapshot = (contenido.decode('utf-8', errors='replace')
                 if es_texto and len(contenido) <= MAX_TEXT_SNAPSHOT_BYTES else None)
+    if ruta_archivo.suffix.lower() == '.docx':
+        snapshot = texto_docx(nombre_archivo, contenido)
 
     resultado_nube = subir_version_archivo(ruta_archivo, nombre_archivo, contenido=contenido)
 

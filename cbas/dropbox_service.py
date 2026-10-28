@@ -10,7 +10,9 @@ Provee funciones para:
 from datetime import timezone
 from pathlib import Path
 import os
+import stat
 import tempfile
+from contextlib import contextmanager
 import dropbox
 from dropbox.files import WriteMode, ListRevisionsMode
 from cbas.validation import validar_nombre, validar_revision
@@ -161,6 +163,36 @@ def listar_revisiones_dropbox(nombre_archivo: str, limite: int = 30) -> list[dic
     return revisiones
 
 
+@contextmanager
+def destino_restaurable(ruta: Path):
+    """Comprueba y mantiene el permiso de reemplazo antes de cambiar Dropbox."""
+    handle = None
+    kernel = None
+    if os.name == 'nt' and ruta.exists():
+        if ruta.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
+            raise PermissionError('El archivo está marcado como solo lectura.')
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                      ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        # DELETE access; compartir lectura, escritura y borrado. No elimina el archivo.
+        handle = kernel.CreateFileW(str(ruta.resolve()), 0x10000, 7, None, 3, 0, None)
+        if handle == wintypes.HANDLE(-1).value:
+            raise PermissionError('El archivo está abierto o no permite reemplazo.')
+    def liberar():
+        nonlocal handle
+        if handle is not None and kernel is not None:
+            kernel.CloseHandle(handle)
+            handle = None
+    try:
+        yield liberar
+    finally:
+        liberar()
+
+
 def restaurar_version_en_carpeta(nombre_archivo: str, rev_objetivo: str) -> dict:
     """
     Restaura el archivo en Dropbox al identificador rev elegido mediante files_restore
@@ -170,6 +202,11 @@ def restaurar_version_en_carpeta(nombre_archivo: str, rev_objetivo: str) -> dict
     validar_revision(rev_objetivo)
     ruta_nube = construir_ruta_dropbox(nombre_archivo)
     ruta_local_destino = MONITORED_DIR / nombre_archivo
+    with destino_restaurable(ruta_local_destino) as liberar:
+        return _restaurar_en_destino(nombre_archivo, rev_objetivo, ruta_nube, ruta_local_destino, liberar)
+
+
+def _restaurar_en_destino(nombre_archivo, rev_objetivo, ruta_nube, ruta_local_destino, liberar):
     dbx = obtener_cliente_dropbox()
 
     MONITORED_DIR.mkdir(parents=True, exist_ok=True)
@@ -182,6 +219,8 @@ def restaurar_version_en_carpeta(nombre_archivo: str, rev_objetivo: str) -> dict
         restaurado_meta = dbx.files_restore(ruta_nube, rev_objetivo)
         if calcular_hash_bytes(contenido) != restaurado_meta.content_hash:
             raise RuntimeError('La revisión descargada no coincide con el hash restaurado.')
+        # Windows no permite MoveFileEx sobre un destino con handles abiertos.
+        liberar()
         os.replace(temporal, ruta_local_destino)
     finally:
         Path(temporal).unlink(missing_ok=True)

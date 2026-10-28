@@ -14,6 +14,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, render_template, send_file
 from werkzeug.exceptions import HTTPException
 from cbas.validation import validar_nombre, validar_revision
+from cbas.documents import texto_docx, MAX_DOCX_BYTES
 
 from cbas.config import (
     MONITORED_DIR,
@@ -65,6 +66,11 @@ def validar_rutas_api():
 @app.errorhandler(ValueError)
 def error_validacion(exc):
     return jsonify(error=str(exc)), 400
+
+
+@app.errorhandler(PermissionError)
+def error_archivo_bloqueado(exc):
+    return jsonify(error='No se puede reemplazar el archivo local. Cierra el documento en Word u otra aplicación y vuelve a restaurarlo. Si persiste, revisa los permisos de la carpeta.'), 409
 
 
 @app.errorhandler(HTTPException)
@@ -161,8 +167,9 @@ def obtener_texto_de_version(version_dict: dict) -> str | None:
     Obtiene el texto de una version desde la base de datos local;
     si no estuviera en cache y el archivo es de texto, lo descarga de Dropbox por su rev y lo guarda.
     """
-    if (not version_dict.get("es_texto")
-            or version_dict['tamano_bytes'] > MAX_TEXT_SNAPSHOT_BYTES):
+    es_docx = Path(version_dict['nombre_archivo']).suffix.lower() == '.docx'
+    if (not version_dict.get('es_texto') and not es_docx
+            or version_dict['tamano_bytes'] > (MAX_DOCX_BYTES if es_docx else MAX_TEXT_SNAPSHOT_BYTES)):
         return None
     if version_dict.get("contenido_texto") is not None:
         return version_dict["contenido_texto"]
@@ -171,8 +178,9 @@ def obtener_texto_de_version(version_dict: dict) -> str | None:
         raw_bytes, _ = descargar_bytes_version(
             version_dict["nombre_archivo"], rev=version_dict["rev_dropbox"]
         )
-        texto = raw_bytes.decode("utf-8", errors="replace")
-        guardar_snapshot_texto_en_version(version_dict["id"], texto)
+        texto = texto_docx(version_dict['nombre_archivo'], raw_bytes) if es_docx else raw_bytes.decode('utf-8', errors='replace')
+        if texto is not None:
+            guardar_snapshot_texto_en_version(version_dict["id"], texto)
         return texto
     except Exception:
         raise RuntimeError('No se pudo recuperar el contenido de esta revisión.') from None
@@ -276,13 +284,15 @@ def api_comparar_version_archivo(nombre_archivo: str):
             return jsonify(error='La versión de comparación no existe.'), 404
 
     es_texto = bool(ver_objetivo["es_texto"])
-    texto_objetivo = obtener_texto_de_version(ver_objetivo) if es_texto else None
-    texto_base = obtener_texto_de_version(ver_base) if (ver_base and es_texto) else None
+    es_docx = Path(nombre_archivo).suffix.lower() == '.docx'
+    tiene_preview = es_texto or es_docx
+    texto_objetivo = obtener_texto_de_version(ver_objetivo) if tiene_preview else None
+    texto_base = obtener_texto_de_version(ver_base) if (ver_base and tiene_preview) else None
 
     resultado_diff = calcular_resumen_y_diff(texto_base, texto_objetivo)
-    if es_texto and (texto_objetivo is None or (ver_base and texto_base is None)):
+    if tiene_preview and (texto_objetivo is None or (ver_base and texto_base is None)):
         resultado_diff = dict(es_texto=True, lineas_diff=[], lineas_agregadas=0,
-                              lineas_eliminadas=0, resumen='Comparación no disponible: límite de 512 KiB.')
+                              lineas_eliminadas=0, resumen='Comparación no disponible: no se pudo extraer el texto completo o supera el límite.')
 
     return jsonify(
         {
@@ -311,6 +321,7 @@ def api_comparar_version_archivo(nombre_archivo: str):
                 else None
             ),
             "contenido_texto": texto_objetivo,
+            "tipo_vista_previa": 'docx' if es_docx else 'texto' if es_texto else None,
             "diff": resultado_diff,
         }
     )
@@ -374,12 +385,16 @@ def _restaurar_version(nombre_archivo, rev_objetivo, num_version_origen, es_txt)
 
     try:
         restaurado = restaurar_version_en_carpeta(nombre_archivo, rev_objetivo)
+    except PermissionError:
+        raise
     except Exception as exc:
         raise RuntimeError('No se pudo restaurar desde Dropbox.') from None
 
     contenido = restaurado.pop('_contenido')
     texto_recuperado = (contenido.decode('utf-8', errors='replace')
                         if es_txt and len(contenido) <= MAX_TEXT_SNAPSHOT_BYTES else None)
+    if Path(nombre_archivo).suffix.lower() == '.docx':
+        texto_recuperado = texto_docx(nombre_archivo, contenido)
 
     estacion = obtener_metadatos_estacion()
     etiqueta_origen = f"v{num_version_origen} ({rev_objetivo[:10]})" if num_version_origen else rev_objetivo

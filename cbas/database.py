@@ -277,7 +277,7 @@ def registrar_nueva_version(datos: dict) -> dict:
             texto_previo = ultima_version_row["contenido_texto"]
             bytes_previos = int(ultima_version_row["tamano_bytes"])
 
-        if es_texto_bool and contenido_texto is not None:
+        if contenido_texto is not None and (es_texto_bool or extension == '.docx'):
             info_diff = calcular_resumen_y_diff(texto_previo, contenido_texto)
             agregadas = info_diff["lineas_agregadas"]
             eliminadas = info_diff["lineas_eliminadas"]

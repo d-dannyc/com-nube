@@ -25,7 +25,11 @@ async function api(url, options = {}) {
   try { response = await fetch(url, {...options, signal: AbortSignal.timeout(45000)}); }
   catch { throw new Error('No se pudo conectar con CBAS. Comprueba que el servidor esté activo y pulsa Actualizar.'); }
   const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.error || `No se pudo completar la solicitud (${response.status}).`);
+  if (!response.ok) {
+    const error = new Error(data?.error || `No se pudo completar la solicitud (${response.status}).`);
+    error.status = response.status;
+    throw error;
+  }
   if (!data) throw new Error('El servidor devolvió una respuesta no válida.');
   return data;
 }
@@ -94,14 +98,17 @@ function renderDetail() {
   $('file-name').textContent = state.file;
   $('file-type').textContent = state.file.split('.').pop().toUpperCase();
   $('file-meta').textContent = `Versión ${v.numero_version} · ${bytes(v.tamano_bytes)} · ${date(v.fecha_registro_utc)}`;
-  $('preview-state').textContent = '';
+  $('preview-state').textContent = data.tipo_vista_previa === 'docx'
+    ? 'Texto principal de Word, sin formato, imágenes, encabezados ni notas.' : '';
+  $('preview').classList.toggle('document-text', data.tipo_vista_previa === 'docx');
   $('preview').textContent = data.contenido_texto ?? (v.es_texto
     ? 'Este archivo supera el límite de vista previa (512 KiB). Descarga la versión para leerlo completo.'
+    : data.tipo_vista_previa === 'docx' ? 'No se pudo extraer el texto: documento no compatible o límite de tamaño excedido. Descarga la versión para abrirla en Word.'
     : 'La vista previa no está disponible para este formato. Descarga esta versión para abrirla con su aplicación.');
   $('diff-summary').textContent = `${data.diff.resumen}${data.version_comparada ? ` · Base: v${data.version_comparada.numero_version} → seleccionada: v${v.numero_version}` : ''}`;
   $('diff-lines').replaceChildren();
-  if (!v.es_texto || data.contenido_texto === null) {
-    $('diff-lines').append(element('p', 'empty small', 'Comparación disponible para versiones de texto de hasta 512 KiB.'));
+  if (data.contenido_texto === null || !data.diff.lineas_diff.length) {
+    $('diff-lines').append(element('p', 'empty small', data.diff.resumen || 'No hay texto para comparar.'));
   } else {
     const fragment = document.createDocumentFragment();
     for (const line of data.diff.lineas_diff) {
@@ -265,7 +272,9 @@ $('restore-form').addEventListener('submit', async e => {
       body: JSON.stringify({nombre_archivo: name, rev, numero_version: version})});
     state.version = data.nueva_version.numero_version;
     notice(`Restauración completada. ${name} se registró como versión ${state.version}.`, true);
-  } catch (err) { notice(`${err.message} Actualiza el historial antes de reintentar para comprobar si la operación llegó a completarse.`); }
+  } catch (err) {
+    notice(err.status === 409 ? err.message : `${err.message} Actualiza el historial antes de reintentar para comprobar si la operación llegó a completarse.`);
+  }
   finally {
     state.restoring = false; $('restore-dialog').close(); $('confirm-restore').disabled = false;
     $('cancel-restore').disabled = false; $('confirm-restore').textContent = 'Sí, restaurar'; lockActions(); await refresh();
