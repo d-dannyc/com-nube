@@ -1,6 +1,6 @@
 # CBAS — Cloud Backup & Audit System
 
-Proyecto de Computación en la Nube. Respaldo de archivos en Dropbox y registra sus versiones en SQLite. Su panel web permite consultar cambios, descargar copias y restaurar versiones anteriores.
+Proyecto de Computación en la Nube. Respalda archivos en Dropbox y registra sus versiones en SQLite. Su panel web permite consultar cambios, descargar copias y restaurar versiones anteriores.
 
 ## Requisitos
 
@@ -18,6 +18,8 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock.txt
 ```
 
+Ejecuta los comandos desde la raíz del repositorio. El soporte de Word está incluido en `cbas/documents.py`; no necesitas instalar Word ni librerías adicionales para previsualizar `.docx`.
+
 ## Conectar Dropbox
 
 1. Abre tu aplicación en Dropbox Developers o crea una con acceso **App Folder**.
@@ -31,6 +33,8 @@ python -m venv .venv
 
 El asistente guarda las credenciales en `.env`. Si ya tienes configurado ese archivo, puedes omitir este paso. No compartas ni subas `.env` al repositorio.
 
+Cada clon debe configurar sus propias credenciales. La base SQLite y la carpeta monitoreada se crean automáticamente al iniciar.
+
 ## Iniciar y usar
 
 ```powershell
@@ -42,4 +46,15 @@ Abre **http://127.0.0.1:5050** y mantén la terminal abierta. Para detener el si
 Guarda los archivos directamente en `directorio_pyme/`: se respaldan automáticamente en Dropbox. Desde el panel puedes seleccionar un archivo y consultar, comparar, descargar o restaurar sus versiones. La restauración pide confirmación antes de reemplazar el archivo local.
 
 Para cambiar el puerto o la carpeta remota, consulta las variables de `.env.example`, agrégalas a `.env` y reinicia el programa.
-Los archivos `.docx` permiten previsualizar y comparar su texto principal, sin imágenes ni formato de Word. Si un documento está abierto y bloquea la restauración, ciérralo antes de restaurarlo.
+
+Los archivos `.docx` permiten previsualizar y comparar su texto principal, sin imágenes ni formato de Word. El formato antiguo `.doc` no tiene vista previa. Para restaurar, cierra el documento y comprueba que no esté marcado como solo lectura.
+
+## Si ya lo habías clonado
+
+Actualiza el repositorio, instala las dependencias y vuelve a ejecutar el programa:
+
+```powershell
+git pull --ff-only
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock.txt
+.\.venv\Scripts\python.exe run_cbas.py
+```
