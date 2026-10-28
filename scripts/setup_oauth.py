@@ -5,6 +5,8 @@ de la raiz del proyecto sin presuponer experiencia previa del administrador.
 """
 
 from pathlib import Path
+from getpass import getpass
+from dotenv import set_key
 from dropbox import DropboxOAuth2FlowNoRedirect
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -18,7 +20,7 @@ def configurar_oauth_interactivo():
     print("Este asistente conectara su aplicacion de Dropbox Developers con CBAS.\n")
 
     app_key = input("1. Ingrese su App key de Dropbox: ").strip()
-    app_secret = input("2. Ingrese su App secret de Dropbox: ").strip()
+    app_secret = getpass("2. Ingrese su App secret de Dropbox (oculto): ").strip()
 
     if not app_key or not app_secret:
         print("[ERROR] Debe proporcionar tanto el App key como el App secret.")
@@ -47,16 +49,9 @@ def configurar_oauth_interactivo():
         print(f"\n[ERROR] No se pudo canjear el codigo de autorizacion: {exc}")
         return
 
-    contenido_env = (
-        f"DROPBOX_APP_KEY={app_key}\n"
-        f"DROPBOX_APP_SECRET={app_secret}\n"
-        f"DROPBOX_REFRESH_TOKEN={oauth_result.refresh_token}\n"
-        f"CBAS_BACKEND_HOST=127.0.0.1\n"
-        f"CBAS_BACKEND_PORT=5050\n"
-        f"CBAS_DROPBOX_FOLDER=/CBAS_Pyme_Vault\n"
-    )
-
-    ENV_FILE.write_text(contenido_env, encoding="utf-8")
+    for clave, valor in {'DROPBOX_APP_KEY': app_key, 'DROPBOX_APP_SECRET': app_secret,
+                         'DROPBOX_REFRESH_TOKEN': oauth_result.refresh_token}.items():
+        set_key(str(ENV_FILE), clave, valor)
     print("\n[OK] Vinculacion OAuth 2.0 completada con exito.")
     print(f"[OK] Credenciales guardadas en: {ENV_FILE}")
 
