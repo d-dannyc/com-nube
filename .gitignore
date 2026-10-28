@@ -14,6 +14,11 @@
 
 # 2. Herramientas de Inteligencia Artificial y Agentes
 .agents/
+.codex/
+.superpowers/
+/docs/superpowers/
+/PRODUCT.md
+/DESIGN.md
 skills-lock.json
 .gemini/
 .claude/
@@ -50,12 +55,23 @@ pip-delete-this-directory.txt
 
 # 4. Bases de datos locales de auditoria y logs en tiempo real
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 cbas_audit.db
 cbas_auditoria.db
 *.log
 *.pid
+.cbas-checks/
+
+# Documentos locales: conservar solo los ejemplos del repositorio
+/directorio_pyme/*
+!/directorio_pyme/Balance_Contable_2026.csv
+!/directorio_pyme/Configuracion_ERP_Pyme.json
+!/directorio_pyme/Contratos_Proveedores_2026.md
+!/directorio_pyme/Planilla_Sueldos_RRHH.csv
 
 # 5. Archivos temporales y de bloqueo ofimaticos (Word, LibreOffice, Excel)
 .~lock.*
