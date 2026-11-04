@@ -202,6 +202,7 @@ def restaurar_version_en_carpeta(nombre_archivo: str, rev_objetivo: str) -> dict
     validar_revision(rev_objetivo)
     ruta_nube = construir_ruta_dropbox(nombre_archivo)
     ruta_local_destino = MONITORED_DIR / nombre_archivo
+    ruta_local_destino.parent.mkdir(parents=True, exist_ok=True)
     with destino_restaurable(ruta_local_destino) as liberar:
         return _restaurar_en_destino(nombre_archivo, rev_objetivo, ruta_nube, ruta_local_destino, liberar)
 
@@ -209,9 +210,9 @@ def restaurar_version_en_carpeta(nombre_archivo: str, rev_objetivo: str) -> dict
 def _restaurar_en_destino(nombre_archivo, rev_objetivo, ruta_nube, ruta_local_destino, liberar):
     dbx = obtener_cliente_dropbox()
 
-    MONITORED_DIR.mkdir(parents=True, exist_ok=True)
+    ruta_local_destino.parent.mkdir(parents=True, exist_ok=True)
     # Descargar y verificar ANTES de cambiar la versión activa o el archivo local.
-    fd, temporal = tempfile.mkstemp(prefix='.cbas-restore-', dir=MONITORED_DIR)
+    fd, temporal = tempfile.mkstemp(prefix='.cbas-restore-', dir=ruta_local_destino.parent)
     os.close(fd)
     try:
         dbx.files_download_to_file(temporal, ruta_nube, rev=rev_objetivo)

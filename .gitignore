@@ -66,12 +66,16 @@ cbas_auditoria.db
 *.pid
 .cbas-checks/
 
-# Documentos locales: conservar solo los ejemplos del repositorio
+# Documentos locales: conservar solo los ejemplos departamentales del repositorio
 /directorio_pyme/*
-!/directorio_pyme/Balance_Contable_2026.csv
-!/directorio_pyme/Configuracion_ERP_Pyme.json
-!/directorio_pyme/Contratos_Proveedores_2026.md
-!/directorio_pyme/Planilla_Sueldos_RRHH.csv
+!/directorio_pyme/Contabilidad
+!/directorio_pyme/Contabilidad/*
+!/directorio_pyme/Recursos_Humanos
+!/directorio_pyme/Recursos_Humanos/*
+!/directorio_pyme/Legal
+!/directorio_pyme/Legal/*
+!/directorio_pyme/Sistemas_TI
+!/directorio_pyme/Sistemas_TI/*
 
 # 5. Archivos temporales y de bloqueo ofimaticos (Word, LibreOffice, Excel)
 .~lock.*

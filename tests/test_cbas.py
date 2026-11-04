@@ -231,6 +231,95 @@ class CbasTests(unittest.TestCase):
         self.assertIn('CUSTOM_SETTING=keep', result)
         self.assertIn('DROPBOX_REFRESH_TOKEN=', result)
 
+    def test_departmental_file_and_auto_organize(self):
+        p = self.root / 'Balance_Mensual.csv'
+        p.write_text('fecha,monto\n2026-11-01,1000\n')
+        with patch.object(agent, 'subir_version_archivo', side_effect=self.cloud_result):
+            res_org = self.client.post('/api/organize')
+            self.assertEqual(res_org.status_code, 200)
+            self.assertGreaterEqual(res_org.json['total'], 1)
+        # Should now be in Contabilidad/Balance_Mensual.csv
+        archivos = self.client.get('/api/files?departamento=Contabilidad').json['archivos']
+        self.assertTrue(any('Balance_Mensual.csv' in a['nombre_archivo'] for a in archivos))
+
+    def test_file_protection_and_critical_anomaly_alert(self):
+        p = self.seed()
+        # Proteger archivo
+        res_prot = self.client.post(f'/api/files/{p.name}/protect', json={'protegido': True})
+        self.assertEqual(res_prot.status_code, 200)
+        self.assertTrue(res_prot.json['protegido'])
+
+        # Intentar modificar el archivo protegido
+        p.write_text('modificacion no autorizada\n')
+        with patch.object(agent, 'subir_version_archivo', side_effect=self.cloud_result):
+            agent.sincronizar_archivo_guardado(p)
+
+        ver = database.obtener_version_especifica(p.name, numero_version=2)
+        self.assertEqual(ver['nivel_riesgo'], 'CRITICO')
+        self.assertIn('congelado', ver['alerta_metadatos'].lower())
+
+    def test_milestone_and_version_compaction(self):
+        p = self.seed()
+        # Generar 5 versiones
+        with patch.object(agent, 'subir_version_archivo', side_effect=self.cloud_result):
+            for i in range(2, 6):
+                p.write_text(f'version {i}\n')
+                agent.sincronizar_archivo_guardado(p)
+
+        self.assertEqual(len(database.listar_versiones_de_archivo(p.name)), 5)
+
+        # Marcar v2 como Hito
+        res_hito = self.client.post(f'/api/files/{p.name}/versions/2/milestone',
+                                    json={'es_hito': True, 'etiqueta_hito': 'Auditoría Q3'})
+        self.assertEqual(res_hito.status_code, 200)
+
+        # Compactar manteniendo solo las 2 más recientes (v4 y v5)
+        # Debe conservar v1 (por ser inicial), v2 (por ser hito), y v4, v5 (por ser recientes)
+        # Debe podar únicamente v3
+        res_comp = self.client.post(f'/api/files/{p.name}/compact', json={'mantener_recientes': 2})
+        self.assertEqual(res_comp.status_code, 200)
+        self.assertEqual(res_comp.json['versiones_eliminadas'], 1)
+        versiones_restantes = [v['numero_version'] for v in database.listar_versiones_de_archivo(p.name)]
+        self.assertIn(1, versiones_restantes)
+        self.assertIn(2, versiones_restantes)
+        self.assertNotIn(3, versiones_restantes)
+        self.assertIn(5, versiones_restantes)
+
+    def test_ransomware_simulation_and_rollback(self):
+        p = self.seed()
+        # 1. Simular ataque de ransomware
+        with patch.object(agent, 'subir_version_archivo', side_effect=self.cloud_result):
+            res_sim = self.client.post('/api/simulator/ransomware', json={'nombre_archivo': p.name, 'modo': 'simular'})
+            self.assertEqual(res_sim.status_code, 200)
+            self.assertEqual(res_sim.json['modo'], 'simular')
+
+        # Verificar que la nueva versión se etiquetó como CRITICA por firma ransomware
+        ver2 = database.obtener_version_especifica(p.name, numero_version=2)
+        self.assertEqual(ver2['nivel_riesgo'], 'CRITICO')
+        self.assertIn('ransomware', ver2['alerta_metadatos'].lower())
+
+        # 2. Rollback inmediato
+        restore_result = dict(self.cloud_result(p), nueva_rev_activa='rev_clean_3',
+                              fecha_servidor_utc='2026-11-04 12:00:00 UTC', _contenido=b'original\n')
+        with patch.object(backend, 'restaurar_version_en_carpeta', return_value=restore_result):
+            res_roll = self.client.post('/api/simulator/ransomware', json={'nombre_archivo': p.name, 'modo': 'rollback'})
+            self.assertEqual(res_roll.status_code, 200)
+            self.assertEqual(res_roll.json['version_restaurada'], 1)
+
+    def test_analytics_and_save_content(self):
+        self.seed()
+        # Probar endpoint de analítica de metadatos
+        res_analytics = self.client.get('/api/analytics')
+        self.assertEqual(res_analytics.status_code, 200)
+        self.assertIn('departamentos', res_analytics.json)
+        self.assertIn('riesgos', res_analytics.json)
+
+        # Probar guardado directo desde editor web
+        with patch.object(agent, 'subir_version_archivo', side_effect=self.cloud_result):
+            res_save = self.client.post('/api/files/demo.txt/save-content', json={'contenido_texto': 'linea nueva\n'})
+            self.assertEqual(res_save.status_code, 200)
+        self.assertEqual((self.root / 'demo.txt').read_text(), 'linea nueva\n')
+
 
 if __name__ == '__main__':
     unittest.main()

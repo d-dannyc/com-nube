@@ -1,11 +1,13 @@
 """
 Servidor Backend y API REST de Control de Versiones y Auditoria para CBAS.
 Sirve la interfaz web y expone endpoints rapidos para:
-- Listar archivos monitoreados en directorio_pyme/.
+- Listar archivos monitoreados por departamentos en directorio_pyme/.
 - Consultar el historial de versiones de cualquier archivo al instante.
 - Comparar los cambios linea por linea (Diff estilo Git) entre cualquier version y su version previa o actual.
 - Descargar cualquier version historica (rev) directamente al navegador sin sobrescribir el archivo local.
 - Restaurar una version elegida hacia directorio_pyme/ cuando el usuario lo solicite.
+- Gestionar hitos inmutables, protección de documentos auditados y compactación de micro-versiones.
+- Proveer analítica de metadatos, autoguardado/edición en vivo y simulador de incidentes de resiliencia.
 """
 
 import io
@@ -13,7 +15,7 @@ import json
 from pathlib import Path
 from flask import Flask, jsonify, request, render_template, send_file
 from werkzeug.exceptions import HTTPException
-from cbas.validation import validar_nombre, validar_revision
+from cbas.validation import validar_nombre, validar_revision, inferir_departamento, DEPARTAMENTOS_VALIDOS
 from cbas.documents import texto_docx, MAX_DOCX_BYTES
 
 from cbas.config import (
@@ -32,6 +34,10 @@ from cbas.database import (
     guardar_snapshot_texto_en_version,
     listar_actividad_reciente,
     obtener_resumen_sistema,
+    marcar_hito_version,
+    cambiar_proteccion_archivo,
+    compactar_versiones_menores,
+    obtener_analitica_metadatos,
     MAX_TEXT_SNAPSHOT_BYTES,
     leer_snapshot_texto,
 )
@@ -94,22 +100,23 @@ def entero_positivo(valor, nombre, maximo=None):
         raise ValueError(f'{nombre} está fuera del rango permitido.')
     return numero
 
+
 ARCHIVOS_INICIALES_CARPETA = {
-    "Balance_Contable_2026.csv": (
+    "Contabilidad/Balance_Contable_2026.csv": (
         "fecha,codigo_cuenta,concepto,area_responsable,debe_bs,haber_bs,saldo_bs\n"
         "2026-10-01,1101-01,Apertura Caja General Octubre,Contabilidad,185000.00,0.00,185000.00\n"
         "2026-10-08,4102-04,Cobro Factura 4082 Cliente Corporativo,Ventas,64500.00,0.00,249500.00\n"
         "2026-10-15,5201-09,Pago Proveedores Materia Prima,Adquisiciones,0.00,42300.00,207200.00\n"
         "2026-10-20,5104-02,Provision Planilla Octubre 2026,Recursos Humanos,0.00,58900.00,148300.00\n"
     ),
-    "Planilla_Sueldos_RRHH.csv": (
+    "Recursos_Humanos/Planilla_Sueldos_RRHH.csv": (
         "id_empleado,nombre_completo,cargo,departamento,haber_basico_bs,liquido_pagable_bs\n"
         "EMP-101,Saul Mijael Choquehuanca Huanca,Responsable de Operaciones TI,Sistemas,9800.00,9126.00\n"
         "EMP-102,Carlos Daniel Quispe Chambi,Administrador de Infraestructura,Sistemas,9500.00,8845.00\n"
         "EMP-103,Victor Bernardo Quispe Rojas,Contador General,Contabilidad,8900.00,8275.00\n"
         "EMP-104,Gabriel Yujra Machaca,Analista Administrativo,Administracion,8600.00,7980.00\n"
     ),
-    "Configuracion_ERP_Pyme.json": json.dumps(
+    "Sistemas_TI/Configuracion_ERP_Pyme.json": json.dumps(
         {
             "empresa": "Comercial Andina S.R.L.",
             "nit": "3849201015",
@@ -123,7 +130,7 @@ ARCHIVOS_INICIALES_CARPETA = {
         ensure_ascii=False,
     )
     + "\n",
-    "Contratos_Proveedores_2026.md": (
+    "Legal/Contratos_Proveedores_2026.md": (
         "# Registro de Contratos y Proveedores - Gestion 2026\n\n"
         "## 1. Proveedores Activos\n"
         "- Distribuidora Industrial del Sur S.A. - Vigencia: Diciembre 2026\n"
@@ -138,22 +145,23 @@ ARCHIVOS_INICIALES_CARPETA = {
 def inicializar_carpeta_y_sincronizar() -> list[dict]:
     """
     Inicializa la base de datos y sincroniza todos los archivos reales presentes
-    en directorio_pyme/ hacia Dropbox.
+    en directorio_pyme/ (incluyendo subcarpetas departamentales) hacia Dropbox.
     """
     inicializar_base_datos()
     MONITORED_DIR.mkdir(parents=True, exist_ok=True)
 
     archivos_existentes = [
-        p for p in MONITORED_DIR.iterdir()
+        p for p in MONITORED_DIR.rglob("*")
         if p.is_file() and not es_archivo_temporal_o_ignorado(p)
     ]
     if not archivos_existentes:
-        for nombre, contenido in ARCHIVOS_INICIALES_CARPETA.items():
-            ruta = MONITORED_DIR / nombre
+        for rel_nombre, contenido in ARCHIVOS_INICIALES_CARPETA.items():
+            ruta = MONITORED_DIR / rel_nombre
+            ruta.parent.mkdir(parents=True, exist_ok=True)
             ruta.write_text(contenido, encoding="utf-8")
 
     resultados = []
-    for ruta in sorted(MONITORED_DIR.iterdir()):
+    for ruta in sorted(MONITORED_DIR.rglob("*")):
         if ruta.is_file() and not es_archivo_temporal_o_ignorado(ruta):
             res = sincronizar_archivo_guardado(ruta)
             if res:
@@ -211,6 +219,7 @@ def api_estado_sistema():
             "estacion_local": estacion,
             "dropbox": cuenta_dropbox,
             "directorio_monitoreado": str(MONITORED_DIR),
+            "departamentos": DEPARTAMENTOS_VALIDOS,
             "sincronizacion": obtener_estado_sincronizacion(),
         }
     )
@@ -218,7 +227,8 @@ def api_estado_sistema():
 
 @app.route("/api/files", methods=["GET"])
 def api_listar_archivos():
-    archivos = listar_archivos_monitoreados()
+    departamento = request.args.get("departamento")
+    archivos = listar_archivos_monitoreados(departamento=departamento)
     return jsonify({"archivos": archivos})
 
 
@@ -246,10 +256,6 @@ def api_listar_versiones_archivo(nombre_archivo: str):
 def api_comparar_version_archivo(nombre_archivo: str):
     """
     Devuelve el contenido y la comparacion de cambios (Diff estilo Git) de una version elegida.
-    Parametros opcionales:
-    - version: numero_version a inspeccionar (por defecto la version mas reciente).
-    - compare_to: 'prev' (version inmediata anterior, por defecto), 'current' (version actual),
-                  o un numero de version especifico.
     """
     versiones = listar_versiones_de_archivo(nombre_archivo)
     if not versiones:
@@ -270,7 +276,6 @@ def api_comparar_version_archivo(nombre_archivo: str):
 
     num_obj = int(ver_objetivo["numero_version"])
 
-    # Determinar contra que version comparar
     ver_base = None
     if modo_comparacion == "prev":
         if num_obj > 1:
@@ -303,6 +308,12 @@ def api_comparar_version_archivo(nombre_archivo: str):
                 "content_hash": ver_objetivo["content_hash"],
                 "tamano_bytes": ver_objetivo["tamano_bytes"],
                 "es_texto": es_texto,
+                "es_hito": ver_objetivo.get("es_hito", 0),
+                "etiqueta_hito": ver_objetivo.get("etiqueta_hito"),
+                "nivel_riesgo": ver_objetivo.get("nivel_riesgo", "NORMAL"),
+                "alerta_metadatos": ver_objetivo.get("alerta_metadatos"),
+                "bloques_4mb_total": ver_objetivo.get("bloques_4mb_total", 1),
+                "bytes_ahorrados_delta": ver_objetivo.get("bytes_ahorrados_delta", 0),
                 "tipo_operacion": ver_objetivo["tipo_operacion"],
                 "resumen_cambio": ver_objetivo["resumen_cambio"],
                 "usuario_so": ver_objetivo["usuario_so"],
@@ -330,8 +341,7 @@ def api_comparar_version_archivo(nombre_archivo: str):
 @app.route("/api/files/<path:nombre_archivo>/versions/<rev>/download", methods=["GET"])
 def api_descargar_version_especifica(nombre_archivo: str, rev: str):
     """
-    Descarga directamente al navegador la version elegida (identificada por rev)
-    sin necesidad de restaurarla ni sobrescribir el archivo local en directorio_pyme/.
+    Descarga directamente al navegador la version elegida sin sobrescribir el archivo local.
     """
     ver_local = obtener_version_especifica(nombre_archivo, rev_dropbox=rev)
     if not ver_local:
@@ -341,11 +351,9 @@ def api_descargar_version_especifica(nombre_archivo: str, rev: str):
     ruta_p = Path(nombre_archivo)
     nombre_descarga = f"{ruta_p.stem}_v{num_v}_{rev[:8]}{ruta_p.suffix}"
 
-    # Si tenemos la instantanea exacta en base de datos para texto, o bien descargamos de Dropbox
     try:
         contenido_bytes, _ = descargar_bytes_version(nombre_archivo, rev=rev)
     except Exception as exc:
-        # Una instantánea UTF-8 puede no conservar los bytes originales.
         raise RuntimeError('No se pudo descargar la versión exacta desde Dropbox.') from None
 
     buffer = io.BytesIO(contenido_bytes)
@@ -382,7 +390,6 @@ def api_restaurar_version():
 
 
 def _restaurar_version(nombre_archivo, rev_objetivo, num_version_origen, es_txt):
-
     try:
         restaurado = restaurar_version_en_carpeta(nombre_archivo, rev_objetivo)
     except PermissionError:
@@ -400,21 +407,21 @@ def _restaurar_version(nombre_archivo, rev_objetivo, num_version_origen, es_txt)
     etiqueta_origen = f"v{num_version_origen} ({rev_objetivo[:10]})" if num_version_origen else rev_objetivo
 
     PENDIENTES_AUDITORIA[nombre_archivo] = {
-            "nombre_archivo": nombre_archivo,
-            "ruta_dropbox": restaurado["ruta_dropbox"],
-            "dropbox_file_id": restaurado["dropbox_file_id"],
-            "rev_dropbox": restaurado["nueva_rev_activa"],
-            "content_hash": restaurado["content_hash"],
-            "tamano_bytes": restaurado["tamano_bytes"],
-            "es_texto": es_txt,
-            "tipo_operacion": "RESTAURADO",
-            "usuario_so": estacion["usuario_so"],
-            "direccion_ip": estacion["direccion_ip"],
-            "nombre_equipo": estacion["nombre_equipo"],
-            "fecha_servidor_dropbox_utc": restaurado["fecha_servidor_utc"],
-            "contenido_texto": texto_recuperado,
-            "detalle_operacion": f"Restaurado al contenido de la version {etiqueta_origen}.",
-        }
+        "nombre_archivo": nombre_archivo,
+        "ruta_dropbox": restaurado["ruta_dropbox"],
+        "dropbox_file_id": restaurado["dropbox_file_id"],
+        "rev_dropbox": restaurado["nueva_rev_activa"],
+        "content_hash": restaurado["content_hash"],
+        "tamano_bytes": restaurado["tamano_bytes"],
+        "es_texto": es_txt,
+        "tipo_operacion": "RESTAURADO",
+        "usuario_so": estacion["usuario_so"],
+        "direccion_ip": estacion["direccion_ip"],
+        "nombre_equipo": estacion["nombre_equipo"],
+        "fecha_servidor_dropbox_utc": restaurado["fecha_servidor_utc"],
+        "contenido_texto": texto_recuperado,
+        "detalle_operacion": f"Restaurado al contenido de la version {etiqueta_origen}.",
+    }
     nueva_ver = confirmar_auditoria_pendiente(nombre_archivo)
 
     return jsonify(
@@ -426,11 +433,169 @@ def _restaurar_version(nombre_archivo, rev_objetivo, num_version_origen, es_txt)
     )
 
 
+@app.route("/api/files/<path:nombre_archivo>/protect", methods=["POST"])
+def api_proteger_archivo(nombre_archivo: str):
+    """Congela o descongela un archivo para alertar sobre cualquier modificación posterior."""
+    validar_nombre(nombre_archivo, MONITORED_DIR)
+    datos = request.get_json(silent=True) or {}
+    protegido = bool(datos.get("protegido", True))
+    cambiar_proteccion_archivo(nombre_archivo, protegido)
+    return jsonify({"ok": True, "nombre_archivo": nombre_archivo, "protegido": protegido})
+
+
+@app.route("/api/files/<path:nombre_archivo>/versions/<int:numero_version>/milestone", methods=["POST"])
+def api_fijar_hito(nombre_archivo: str, numero_version: int):
+    """Marca una versión como hito auditado inmutable."""
+    validar_nombre(nombre_archivo, MONITORED_DIR)
+    datos = request.get_json(silent=True) or {}
+    es_hito = bool(datos.get("es_hito", True))
+    etiqueta = datos.get("etiqueta_hito", "Hito de Auditoría")
+    marcar_hito_version(nombre_archivo, numero_version, etiqueta, es_hito)
+    return jsonify({
+        "ok": True,
+        "nombre_archivo": nombre_archivo,
+        "numero_version": numero_version,
+        "es_hito": es_hito,
+        "etiqueta_hito": etiqueta,
+    })
+
+
+@app.route("/api/files/<path:nombre_archivo>/compact", methods=["POST"])
+def api_compactar_versiones(nombre_archivo: str):
+    """Poda micro-guardados intermedios conservando hitos, v1, actual y restauraciones."""
+    validar_nombre(nombre_archivo, MONITORED_DIR)
+    datos = request.get_json(silent=True) or {}
+    mantener = entero_positivo(datos.get("mantener_recientes", 3), "mantener_recientes", 50)
+    resultado = compactar_versiones_menores(nombre_archivo, mantener_recientes=mantener)
+    return jsonify({"ok": True, "nombre_archivo": nombre_archivo, **resultado})
+
+
+@app.route("/api/files/<path:nombre_archivo>/save-content", methods=["POST"])
+def api_guardar_contenido(nombre_archivo: str):
+    """Guarda contenido editado o recuperado tras un apagón directamente en el archivo."""
+    validar_nombre(nombre_archivo, MONITORED_DIR)
+    datos = request.get_json(silent=True)
+    if not isinstance(datos, dict) or "contenido_texto" not in datos:
+        return jsonify(error="Se requiere contenido_texto en el cuerpo JSON."), 400
+
+    contenido = datos["contenido_texto"]
+    ruta_local = MONITORED_DIR / nombre_archivo
+    ruta_local.parent.mkdir(parents=True, exist_ok=True)
+    ruta_local.write_text(contenido, encoding="utf-8")
+
+    resultado = sincronizar_archivo_guardado(
+        ruta_local, detalle_personalizado="Guardado desde la consola web (Autoguardado/Edición)"
+    )
+    return jsonify({"ok": True, "nombre_archivo": nombre_archivo, "resultado": resultado})
+
+
+@app.route("/api/organize", methods=["POST"])
+def api_organizar_departamentos():
+    """Organiza automáticamente archivos sueltos de la raíz en sus subcarpetas departamentales."""
+    organizados = []
+    for p in list(MONITORED_DIR.iterdir()):
+        if p.is_file() and not es_archivo_temporal_o_ignorado(p):
+            depto = inferir_departamento(p.name)
+            if depto != "General":
+                destino_dir = MONITORED_DIR / depto
+                destino_dir.mkdir(parents=True, exist_ok=True)
+                nuevo_path = destino_dir / p.name
+                if not nuevo_path.exists():
+                    p.rename(nuevo_path)
+                    sincronizar_archivo_guardado(
+                        nuevo_path,
+                        detalle_personalizado=f"Organizado automáticamente en departamento {depto}"
+                    )
+                    organizados.append({"archivo": p.name, "nuevo_destino": f"{depto}/{p.name}"})
+    return jsonify({"ok": True, "organizados": organizados, "total": len(organizados)})
+
+
+@app.route("/api/analytics", methods=["GET"])
+def api_analitica_metadatos():
+    """Entrega métricas forenses y de rendimiento cloud para el dashboard."""
+    datos = obtener_analitica_metadatos()
+    return jsonify(datos)
+
+
+@app.route("/api/simulator/ransomware", methods=["POST"])
+def api_simulador_ransomware():
+    """Escenario de prueba interactiva para defensas y ferias: Simula ataque y rollback."""
+    datos = request.get_json(silent=True) or {}
+    nombre_archivo = datos.get("nombre_archivo")
+    modo = datos.get("modo", "simular")
+    if not nombre_archivo:
+        archivos = listar_archivos_monitoreados()
+        if not archivos:
+            return jsonify(error="No hay archivos disponibles para la simulación."), 400
+        nombre_archivo = archivos[0]["nombre_archivo"]
+
+    validar_nombre(nombre_archivo, MONITORED_DIR)
+    ruta_local = MONITORED_DIR / nombre_archivo
+
+    if modo == "simular":
+        payload_malicioso = (
+            "=== LOCKBIT_ENCRYPTED_FILE ===\n"
+            "Todos sus archivos han sido cifrados por una clave RSA-4096.\n"
+            "No intente recuperar sus datos manualmente.\n"
+            "ID de rescate: 0xDEADBEEF2026\n"
+            "=== FIN DE CIFRADO MALICIOSO ==="
+        )
+        ruta_local.parent.mkdir(parents=True, exist_ok=True)
+        ruta_local.write_text(payload_malicioso, encoding="utf-8")
+        sincronizado = sincronizar_archivo_guardado(
+            ruta_local,
+            tipo_operacion_forzada="MODIFICADO",
+            detalle_personalizado="[SIMULACIÓN] Archivo alterado por ataque de Ransomware LockBit"
+        )
+        return jsonify({
+            "ok": True,
+            "modo": "simular",
+            "nombre_archivo": nombre_archivo,
+            "mensaje": f"Archivo {nombre_archivo} alterado con firma de ransomware. Alerta forense generada.",
+            "resultado": sincronizado
+        })
+    elif modo == "rollback":
+        versiones = listar_versiones_de_archivo(nombre_archivo)
+        if len(versiones) < 2:
+            return jsonify(error="Se requieren al menos 2 versiones para ejecutar un rollback."), 400
+        version_limpia = None
+        for v in versiones[1:]:
+            if v.get("nivel_riesgo") != "CRITICO":
+                version_limpia = v
+                break
+        if not version_limpia:
+            version_limpia = versiones[-1]
+
+        resultado_restore = _restaurar_version(
+            nombre_archivo,
+            version_limpia["rev_dropbox"],
+            version_limpia["numero_version"],
+            bool(version_limpia["es_texto"])
+        )
+        return jsonify({
+            "ok": True,
+            "modo": "rollback",
+            "nombre_archivo": nombre_archivo,
+            "version_restaurada": version_limpia["numero_version"],
+            "mensaje": f"Rollback ejecutado con éxito. Se recuperó la versión limpia v{version_limpia['numero_version']}.",
+            "detalle": resultado_restore.get_json() if hasattr(resultado_restore, 'get_json') else resultado_restore
+        })
+    else:
+        return jsonify(error="Modo desconocido (use 'simular' o 'rollback')."), 400
+
+
 @app.route("/api/activity", methods=["GET"])
 def api_registro_actividad():
     archivo = request.args.get("archivo")
+    departamento = request.args.get("departamento")
+    nivel_riesgo = request.args.get("nivel_riesgo")
     if archivo:
-        validar_nombre(archivo)
+        validar_nombre(archivo, MONITORED_DIR)
     limite = entero_positivo(request.args.get("limite", "100"), 'limite', 1000)
-    eventos = listar_actividad_reciente(limite=limite, nombre_archivo=archivo)
+    eventos = listar_actividad_reciente(
+        limite=limite,
+        nombre_archivo=archivo,
+        departamento=departamento,
+        nivel_riesgo=nivel_riesgo
+    )
     return jsonify({"eventos": eventos})

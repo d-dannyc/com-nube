@@ -1,11 +1,13 @@
 """
 Agente Local de Monitoreo en Tiempo Real para CBAS.
-Vigila la carpeta asociada (directorio_pyme/) mediante Python Watchdog:
+Vigila la carpeta asociada (directorio_pyme/) recursivamente mediante Python Watchdog:
 - Las versiones se generan cuando un archivo se guarda en disco o se agrega a la carpeta.
 - Aplica una ventana de estabilizacion (debounce de 1.0 segundo) al guardar.
 - Verifica el content_hash por bloques de 4 MB para no crear versiones repetidas si el
   contenido no cambio y para evitar bucles cuando se restaura una version desde el panel.
-- Soporta cualquier tipo de archivo (texto plano, CSV, JSON, Markdown, codigo, Excel, PDF, imagenes).
+- Detecta sesiones de edición abiertas y archivos de bloqueo temporales (~$*, .~lock.*)
+  para proteger el trabajo contra apagones inesperados.
+- Soporta subcarpetas departamentales (Contabilidad/, Recursos_Humanos/, Legal/, Sistemas_TI/).
 """
 
 import os
@@ -32,21 +34,37 @@ HASHES_SINCRONIZADOS: dict[str, str] = {}
 LOCK_HASHES = threading.Lock()
 LOCKS_ARCHIVO = {}
 PENDIENTES_AUDITORIA = {}
-ESTADO = {'agente_activo': False, 'ultima_comprobacion_utc': None,
-          'pendientes': 0, 'fallidos': 0, 'errores': {}}
+SESIONES_ACTIVAS: dict[str, str] = {}
+ESTADO = {
+    'agente_activo': False,
+    'ultima_comprobacion_utc': None,
+    'pendientes': 0,
+    'fallidos': 0,
+    'errores': {},
+    'sesiones_activas': {},
+}
 
 
-def bloqueo_archivo(nombre):
+def bloqueo_archivo(nombre: str):
     with LOCK_HASHES:
         return LOCKS_ARCHIVO.setdefault(nombre, threading.RLock())
 
 
-def obtener_estado_sincronizacion():
+def obtener_sesiones_activas() -> dict[str, str]:
     with LOCK_HASHES:
-        return {**ESTADO, 'errores': dict(ESTADO['errores'])}
+        return dict(SESIONES_ACTIVAS)
 
 
-def confirmar_auditoria_pendiente(nombre):
+def obtener_estado_sincronizacion() -> dict:
+    with LOCK_HASHES:
+        return {
+            **ESTADO,
+            'errores': dict(ESTADO['errores']),
+            'sesiones_activas': dict(SESIONES_ACTIVAS),
+        }
+
+
+def confirmar_auditoria_pendiente(nombre: str):
     datos = PENDIENTES_AUDITORIA.get(nombre)
     if datos is None:
         return None
@@ -67,30 +85,60 @@ def obtener_hash_sincronizado(nombre_archivo: str) -> str | None:
 
 
 def es_archivo_temporal_o_ignorado(ruta: str | Path) -> bool:
-    """Ignora archivos temporales de editores (.swp, .tmp, ~$) y ocultos."""
-    nombre = os.path.basename(str(ruta))
+    """Ignora archivos temporales de editores (.swp, .tmp, ~$) y carpetas ocultas/recuperación."""
+    p = Path(ruta)
+    for part in p.parts:
+        if part.startswith(".") and part not in (".", ".."):
+            return True
+    nombre = p.name
     if not nombre:
         return True
-    if nombre.startswith((".", "~$", "__")):
+    if nombre.startswith((".", "~$", ".~lock", "__")):
         return True
-    if nombre.endswith("~"):
+    if nombre.endswith("~") or nombre.endswith(".tmp"):
         return True
     extensiones_ignoradas = (".tmp", ".swp", ".swo", ".partial", ".crdownload", ".lock", ".pyc")
     return nombre.lower().endswith(extensiones_ignoradas)
 
 
+def obtener_nombre_relativo(ruta_archivo: Path) -> str:
+    """Calcula la ruta relativa con barras normales respecto a MONITORED_DIR."""
+    try:
+        res = Path(ruta_archivo).resolve()
+        mon = MONITORED_DIR.resolve()
+        if res == mon or mon in res.parents:
+            return res.relative_to(mon).as_posix()
+    except Exception:
+        pass
+    return Path(ruta_archivo).name
+
+
+def respaldar_buffer_preventivo(ruta_archivo: Path, nombre_relativo: str) -> None:
+    """Guarda una copia preventiva en .cbas_recovery para restaurar ante cortes de energía."""
+    try:
+        recovery_dir = MONITORED_DIR / ".cbas_recovery"
+        recovery_dir.mkdir(parents=True, exist_ok=True)
+        destino = recovery_dir / nombre_relativo.replace("/", "__")
+        if ruta_archivo.exists() and ruta_archivo.is_file():
+            destino.write_bytes(ruta_archivo.read_bytes())
+    except Exception:
+        pass
+
+
 def sincronizar_archivo_guardado(ruta_archivo, tipo_operacion_forzada=None, detalle_personalizado=None):
     ruta_archivo = Path(ruta_archivo)
-    validar_nombre(ruta_archivo.name, MONITORED_DIR)
-    with bloqueo_archivo(ruta_archivo.name):
-        recuperado = confirmar_auditoria_pendiente(ruta_archivo.name)
-        return _sincronizar_archivo(ruta_archivo, tipo_operacion_forzada, detalle_personalizado) or recuperado
+    nombre_archivo = obtener_nombre_relativo(ruta_archivo)
+    validar_nombre(nombre_archivo, MONITORED_DIR)
+    with bloqueo_archivo(nombre_archivo):
+        recuperado = confirmar_auditoria_pendiente(nombre_archivo)
+        return _sincronizar_archivo(ruta_archivo, tipo_operacion_forzada, detalle_personalizado, nombre_archivo) or recuperado
 
 
 def _sincronizar_archivo(
     ruta_archivo: Path,
     tipo_operacion_forzada: str | None = None,
     detalle_personalizado: str | None = None,
+    nombre_archivo: str | None = None,
 ) -> dict | None:
     """
     Se ejecuta cuando un archivo es creado o guardado en directorio_pyme:
@@ -101,7 +149,9 @@ def _sincronizar_archivo(
     if not ruta_archivo.exists() or not ruta_archivo.is_file():
         return None
 
-    nombre_archivo = ruta_archivo.name
+    if nombre_archivo is None:
+        nombre_archivo = obtener_nombre_relativo(ruta_archivo)
+
     if es_archivo_temporal_o_ignorado(ruta_archivo):
         return None
 
@@ -163,14 +213,16 @@ def _sincronizar_archivo(
         datos_version["detalle_operacion"] = detalle_personalizado
 
     PENDIENTES_AUDITORIA[nombre_archivo] = datos_version
+    # Respaldar buffer de contingencia ante cortes de luz
+    respaldar_buffer_preventivo(ruta_archivo, nombre_archivo)
     return confirmar_auditoria_pendiente(nombre_archivo)
 
 
 class ManejadorCarpetaCBAS(FileSystemEventHandler):
     """
-    Escucha eventos del sistema de archivos en directorio_pyme/.
-    Agrupa escrituras consecutivas mediante un temporizador de 1.0 segundo
-    para que cada guardado genere una unica version limpia.
+    Escucha eventos del sistema de archivos en directorio_pyme/ (recursivo).
+    Agrupa escrituras consecutivas mediante un temporizador para no saturar.
+    Detecta sesiones de bloqueo y edición temporal.
     """
 
     def __init__(self, despertar):
@@ -178,6 +230,14 @@ class ManejadorCarpetaCBAS(FileSystemEventHandler):
         self.despertar = despertar
 
     def _programar_sincronizacion(self, ruta_str: str) -> None:
+        nombre_base = os.path.basename(ruta_str)
+        # Si es un lock o temporal de Office/editor, actualizar sesiones activas
+        if nombre_base.startswith("~$") or nombre_base.startswith(".~lock."):
+            with LOCK_HASHES:
+                SESIONES_ACTIVAS[nombre_base] = ruta_str
+            self.despertar.set()
+            return
+
         if es_archivo_temporal_o_ignorado(ruta_str):
             return
 
@@ -198,12 +258,38 @@ class ManejadorCarpetaCBAS(FileSystemEventHandler):
 
 def reconciliar_carpeta():
     resultados, errores = [], {}
-    rutas = {p.name: p for p in MONITORED_DIR.iterdir()
-             if p.is_file() and not es_archivo_temporal_o_ignorado(p)}
+    rutas = {}
+    bloqueos_encontrados = {}
+
+    try:
+        # Exploración recursiva de la carpeta departamental
+        for p in sorted(MONITORED_DIR.rglob("*")):
+            if not p.is_file():
+                continue
+            nombre_base = p.name
+            if nombre_base.startswith("~$"):
+                bloqueos_encontrados[nombre_base[2:]] = p.as_posix()
+                continue
+            if nombre_base.startswith(".~lock.") and nombre_base.endswith("#"):
+                bloqueos_encontrados[nombre_base[7:-1]] = p.as_posix()
+                continue
+            if es_archivo_temporal_o_ignorado(p):
+                continue
+            rel_name = obtener_nombre_relativo(p)
+            rutas[rel_name] = p
+    except Exception:
+        pass
+
+    with LOCK_HASHES:
+        SESIONES_ACTIVAS.clear()
+        SESIONES_ACTIVAS.update(bloqueos_encontrados)
+
     for nombre in list(PENDIENTES_AUDITORIA):
         rutas.setdefault(nombre, MONITORED_DIR / nombre)
+
     with LOCK_HASHES:
         ESTADO['pendientes'] = len(rutas)
+
     for nombre, ruta in sorted(rutas.items()):
         try:
             resultado = sincronizar_archivo_guardado(ruta)
@@ -214,9 +300,14 @@ def reconciliar_carpeta():
         finally:
             with LOCK_HASHES:
                 ESTADO['pendientes'] -= 1
+
     with LOCK_HASHES:
-        ESTADO.update(ultima_comprobacion_utc=datetime.now(timezone.utc).isoformat(),
-                      fallidos=len(errores), errores=errores)
+        ESTADO.update(
+            ultima_comprobacion_utc=datetime.now(timezone.utc).isoformat(),
+            fallidos=len(errores),
+            errores=errores,
+            sesiones_activas=dict(SESIONES_ACTIVAS),
+        )
     return resultados
 
 
@@ -225,7 +316,7 @@ class AgenteCBAS:
         self.fin = threading.Event()
         self.despertar = threading.Event()
         self.observador = Observer()
-        self.observador.schedule(ManejadorCarpetaCBAS(self.despertar), str(MONITORED_DIR), recursive=False)
+        self.observador.schedule(ManejadorCarpetaCBAS(self.despertar), str(MONITORED_DIR), recursive=True)
         self.hilo = threading.Thread(target=self._ejecutar, daemon=True)
 
     def start(self):
@@ -246,8 +337,6 @@ class AgenteCBAS:
                         ESTADO.update(fallidos=1, pendientes=0, errores={
                             'carpeta': 'No se pudo leer la carpeta monitoreada. Comprueba su ubicación y permisos.'})
                 if self.despertar.wait(15):
-                    # ponytail: debounce de carpeta limitado a 15s; evita que un log
-                    # continuo bloquee los demás archivos. Estabilidad por archivo si crece la carga.
                     limite = time.monotonic() + 15
                     while not self.fin.is_set():
                         restante = limite - time.monotonic()
@@ -271,7 +360,7 @@ class AgenteCBAS:
 
 
 def iniciar_observador_en_segundo_plano():
-    """Inicia el observador Watchdog sobre directorio_pyme/."""
+    """Inicia el observador Watchdog recursivo sobre directorio_pyme/."""
     MONITORED_DIR.mkdir(parents=True, exist_ok=True)
     agente = AgenteCBAS()
     agente.start()
