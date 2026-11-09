@@ -5,12 +5,11 @@ const $ = id => document.getElementById(id);
 const state = {
   files: [],
   file: null,
-  dept: 'Todos',
   versions: [],
   version: null,
   detail: null,
-  mode: 'content', // 'content', 'diff', 'editor'
-  view: 'files',   // 'files', 'audit', 'simulator', 'architecture'
+  mode: 'content', // 'content', 'diff'
+  view: 'files',   // 'files', 'audit', 'diagnostic'
   refreshing: false,
   restoring: false,
   loading: false,
@@ -19,9 +18,9 @@ const state = {
 };
 
 const operations = {
-  CREADO: 'Primer respaldo',
-  MODIFICADO: 'Contenido actualizado',
-  RESTAURADO: 'Versión restaurada'
+  CREADO: 'Primer respaldo en la nube',
+  MODIFICADO: 'Archivo modificado y respaldado',
+  RESTAURADO: 'Versión restaurada desde la nube'
 };
 
 const bytes = n => {
@@ -83,17 +82,40 @@ function lockActions() {
 }
 
 function fileIcon(extension) {
-  const wrap = element('span', 'file-icon');
+  const ext = (extension || '').toLowerCase().replace('.', '');
+  let typeClass = 'file-icon-generic';
+  let svgInner = '';
+
+  if (['docx', 'doc'].includes(ext)) {
+    typeClass = 'file-icon-word';
+    svgInner = '<path d="M7 2h14l7 7v27H7V2Zm14 0v8h7M11 15h12M11 19h12M11 23h8" stroke="currentColor" stroke-width="1.6"/>';
+  } else if (['xlsx', 'xls', 'csv'].includes(ext)) {
+    typeClass = 'file-icon-excel';
+    svgInner = '<path d="M7 2h14l7 7v27H7V2Zm14 0v8h7M11 15h12M11 20h12M11 25h12M17 15v10" stroke="currentColor" stroke-width="1.6"/>';
+  } else if (ext === 'pdf') {
+    typeClass = 'file-icon-pdf';
+    svgInner = '<path d="M7 2h14l7 7v27H7V2Zm14 0v8h7M12 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM10 25v-4h4" stroke="currentColor" stroke-width="1.6"/>';
+  } else if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) {
+    typeClass = 'file-icon-image';
+    svgInner = '<rect x="6" y="5" width="22" height="28" rx="3" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="11" r="2" fill="currentColor"/><path d="m8 27 6-8 4 5 3-3 5 6H8Z" stroke="currentColor" stroke-width="1.4"/>';
+  } else if (['json', 'py', 'sql', 'sh', 'js'].includes(ext)) {
+    typeClass = 'file-icon-code';
+    svgInner = '<path d="M7 2h14l7 7v27H7V2Zm14 0v8h7M13 16l-3 3 3 3M19 16l3 3-3 3" stroke="currentColor" stroke-width="1.6"/>';
+  } else if (ext === 'md') {
+    typeClass = 'file-icon-md';
+    svgInner = '<path d="M7 2h14l7 7v27H7V2Zm14 0v8h7M11 15v8l3-3 3 3v-8" stroke="currentColor" stroke-width="1.6"/>';
+  } else {
+    typeClass = 'file-icon-txt';
+    svgInner = '<path d="M7 2h14l7 7v27H7V2Zm14 0v8h7M11 15h12M11 19h12M11 23h7" stroke="currentColor" stroke-width="1.6"/>';
+  }
+
+  const wrap = element('span', `file-icon ${typeClass}`);
   wrap.setAttribute('aria-hidden', 'true');
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 34 39');
   svg.setAttribute('fill', 'none');
-  const path = document.createElementNS(svg.namespaceURI, 'path');
-  path.setAttribute('d', 'M7 2h14l7 7v27H7V2Zm14 0v8h7');
-  path.setAttribute('stroke', 'currentColor');
-  path.setAttribute('stroke-width', '1.4');
-  svg.append(path);
-  wrap.append(svg, element('span', '', extension.slice(0, 5)));
+  svg.innerHTML = svgInner;
+  wrap.append(svg, element('span', '', ext.slice(0, 4).toUpperCase()));
   return wrap;
 }
 
@@ -103,16 +125,13 @@ function renderFiles() {
   const query = $('search').value.trim().toLocaleLowerCase();
 
   let filtered = state.files;
-  if (state.dept !== 'Todos') {
-    filtered = filtered.filter(f => (f.departamento || 'General') === state.dept);
-  }
   if (query) {
     filtered = filtered.filter(f => f.nombre_archivo.toLocaleLowerCase().includes(query));
   }
 
   $('file-count').textContent = filtered.length;
   if (!filtered.length) {
-    list.append(element('p', 'empty small', query ? 'Ningún archivo coincide con tu búsqueda.' : 'No hay archivos en este departamento.'));
+    list.append(element('p', 'empty small', query ? 'Ningún archivo coincide con tu búsqueda.' : 'No hay archivos monitoreados en la carpeta.'));
     return;
   }
 
@@ -127,12 +146,12 @@ function renderFiles() {
     const title = element('span', 'file-title', file.nombre_archivo);
     titleRow.append(title);
     if (file.protegido) {
-      const lock = element('span', 'file-lock-icon', ' 🔒');
+      const lock = element('span', 'file-lock-badge', ' [Auditado]');
       lock.title = 'Documento congelado / auditado';
       titleRow.append(lock);
     }
 
-    const sub = element('span', 'file-sub', `${file.departamento || 'General'} · ${bytes(file.tamano_bytes)} · v${file.version_actual}`);
+    const sub = element('span', 'file-sub', `${bytes(file.tamano_bytes)} · v${file.version_actual}`);
     copy.append(titleRow, sub);
 
     const ext = file.nombre_archivo.split('.').pop().toUpperCase();
@@ -160,7 +179,7 @@ function renderHistory() {
       header.append(element('span', 'version-current', 'ACTIVA'));
     }
     if (version.es_hito) {
-      header.append(element('span', 'milestone-badge', `⭐ ${version.etiqueta_hito || 'HITO'}`));
+      header.append(element('span', 'milestone-badge', `[Hito] ${version.etiqueta_hito || ''}`));
     }
     if (version.nivel_riesgo === 'CRITICO') {
       header.append(element('span', 'risk-pill critico', 'CRÍTICO'));
@@ -172,7 +191,7 @@ function renderHistory() {
     const opSpan = element('span', 'version-operation', operations[version.tipo_operacion] || version.tipo_operacion);
 
     const actions = element('div', 'version-actions-row');
-    const viewBtn = element('button', 'button-link small', 'Ver');
+    const viewBtn = element('button', 'version-view-btn', 'Ver versión');
     viewBtn.type = 'button';
     viewBtn.addEventListener('click', e => {
       e.stopPropagation();
@@ -180,7 +199,7 @@ function renderHistory() {
     });
     actions.append(viewBtn);
 
-    const milestoneBtn = element('button', 'milestone-btn', version.es_hito ? 'Quitar hito' : '⭐ Fijar hito');
+    const milestoneBtn = element('button', `milestone-btn${version.es_hito ? ' is-milestone' : ''}`, version.es_hito ? 'Quitar hito' : 'Marcar hito');
     milestoneBtn.type = 'button';
     milestoneBtn.addEventListener('click', e => {
       e.stopPropagation();
@@ -200,101 +219,13 @@ function changeMode(mode) {
   state.mode = mode;
   $('show-content').classList.toggle('active', mode === 'content');
   $('show-diff').classList.toggle('active', mode === 'diff');
-  $('show-editor').classList.toggle('active', mode === 'editor');
   $('show-content').setAttribute('aria-pressed', String(mode === 'content'));
   $('show-diff').setAttribute('aria-pressed', String(mode === 'diff'));
-  $('show-editor').setAttribute('aria-pressed', String(mode === 'editor'));
 
   $('preview').hidden = mode !== 'content';
   $('diff-view').hidden = mode !== 'diff';
-  $('editor-view').hidden = mode !== 'editor';
   $('compare-label').hidden = mode !== 'diff';
-
-  if (mode === 'editor' && state.detail) {
-    setupEditor();
-  }
 }
-
-function checkDraftRecovery(fileName, serverContent) {
-  const key = `cbas_draft_${fileName}`;
-  const savedDraft = localStorage.getItem(key);
-  const banner = $('draft-recovery-alert');
-  if (savedDraft && savedDraft !== serverContent) {
-    banner.hidden = false;
-  } else {
-    banner.hidden = true;
-  }
-}
-
-function setupEditor() {
-  if (!state.detail) return;
-  const content = state.detail.contenido_texto || '';
-  const editor = $('file-editor');
-  
-  // Si no se ha tocado o coincide con el servidor, cargamos
-  const key = `cbas_draft_${state.file}`;
-  const savedDraft = localStorage.getItem(key);
-  editor.value = savedDraft || content;
-  updateEditorStats();
-  checkDraftRecovery(state.file, content);
-}
-
-function updateEditorStats() {
-  const val = $('file-editor').value;
-  const lines = val.split('\n').length;
-  const chars = val.length;
-  $('editor-stats').textContent = `Líneas: ${lines} · Caracteres: ${chars} · Autoguardado local activo`;
-}
-
-$('file-editor').addEventListener('input', () => {
-  if (state.file) {
-    localStorage.setItem(`cbas_draft_${state.file}`, $('file-editor').value);
-    updateEditorStats();
-  }
-});
-
-$('btn-restore-draft').addEventListener('click', () => {
-  const saved = localStorage.getItem(`cbas_draft_${state.file}`);
-  if (saved !== null) {
-    $('file-editor').value = saved;
-    updateEditorStats();
-    notice('Borrador previo recuperado en el editor.', true);
-  }
-});
-
-$('btn-dismiss-draft').addEventListener('click', () => {
-  localStorage.removeItem(`cbas_draft_${state.file}`);
-  if (state.detail) {
-    $('file-editor').value = state.detail.contenido_texto || '';
-    updateEditorStats();
-  }
-  $('draft-recovery-alert').hidden = true;
-  notice('Borrador descartado.');
-});
-
-$('btn-save-content').addEventListener('click', async () => {
-  if (!state.file) return;
-  const content = $('file-editor').value;
-  $('btn-save-content').disabled = true;
-  $('btn-save-content').textContent = 'Guardando en Dropbox…';
-  try {
-    const res = await api(`/api/files/${encodeURIComponent(state.file)}/save-content`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({contenido_texto: content}),
-    });
-    localStorage.removeItem(`cbas_draft_${state.file}`);
-    $('draft-recovery-alert').hidden = true;
-    notice(`Archivo «${state.file}» guardado y sincronizado con Dropbox.`, true);
-    await refresh();
-    await selectFile(state.file);
-  } catch (err) {
-    notice(err.message);
-  } finally {
-    $('btn-save-content').disabled = false;
-    $('btn-save-content').textContent = 'Guardar cambios en Dropbox';
-  }
-});
 
 function renderDetail() {
   const data = state.detail;
@@ -303,12 +234,11 @@ function renderDetail() {
 
   $('file-name').textContent = state.file;
   $('file-type').textContent = state.file.split('.').pop().toUpperCase();
-  $('file-dept').textContent = curFile?.departamento || 'General';
 
   // Botón proteger / congelar
   const isProtected = curFile?.protegido;
   $('btn-toggle-protect').className = `protect-btn${isProtected ? ' protected' : ''}`;
-  $('btn-toggle-protect').textContent = isProtected ? '🔒 Documento Congelado / Auditado' : '🔓 Documento Abierto';
+  $('btn-toggle-protect').textContent = isProtected ? '[Solo lectura / Auditado]' : '[Edición permitida]';
 
   $('file-meta').textContent = `Versión ${v.numero_version} · ${bytes(v.tamano_bytes)} · ${date(v.fecha_registro_utc)}`;
 
@@ -317,7 +247,7 @@ function renderDetail() {
   if (v.nivel_riesgo && v.nivel_riesgo !== 'NORMAL') {
     alertBanner.hidden = false;
     alertBanner.className = `risk-banner ${v.nivel_riesgo === 'CRITICO' ? 'risk-critico' : 'risk-advertencia'}`;
-    alertBanner.textContent = `⚠️ [${v.nivel_riesgo}] ${v.alerta_metadatos || 'Anomalía de integridad detectada en esta versión.'}`;
+    alertBanner.textContent = `[${v.nivel_riesgo}] ${v.alerta_metadatos || 'Anomalía de integridad detectada en esta versión.'}`;
   } else {
     alertBanner.hidden = true;
   }
@@ -354,8 +284,8 @@ function renderDetail() {
   $('restore').textContent = `Restaurar v${v.numero_version}`;
 
   const details = [
-    ['Departamento', curFile?.departamento || 'General'],
     ['Estado', isProtected ? 'CONGELADO / AUDITADO' : 'ACTIVO'],
+    ['Estructura de Contenido', data.metadatos_analiticos?.resumen_estructural || '—'],
     ['Revisión rev', v.rev_dropbox],
     ['Content Hash (4MB)', v.content_hash],
     ['Bloques 4MB', v.bloques_4mb_total || 1],
@@ -366,6 +296,9 @@ function renderDetail() {
     ['Fecha UTC', v.fecha_registro_utc],
     ['Detalle Operación', v.detalle_operacion || '—']
   ];
+  if (data.metadatos_analiticos?.total_palabras) {
+    details.splice(3, 0, ['Volumen de Datos', `${data.metadatos_analiticos.total_palabras} palabras · ${data.metadatos_analiticos.total_lineas || 0} líneas`]);
+  }
   $('technical-data').replaceChildren();
   for (const [lbl, val] of details) {
     $('technical-data').append(element('dt', '', lbl), element('dd', '', String(val)));
@@ -446,6 +379,9 @@ async function loadDetail(token) {
 async function loadStatus() {
   try {
     const data = await api('/api/status');
+    const sync = data.sincronizacion;
+    const activeSessions = sync.sesiones_activas || 0;
+
     $('connection').className = `connection ${data.dropbox.conectado ? 'connected' : 'offline'}`;
     $('connection-text').textContent = data.dropbox.conectado ? 'Dropbox conectado' : 'Dropbox sin conexión';
     $('total-files').textContent = data.resumen.total_archivos;
@@ -454,10 +390,8 @@ async function loadStatus() {
     $('total-savings').textContent = bytes(data.resumen.ahorro_delta_bytes || 0);
     $('folder-path').textContent = data.directorio_monitoreado;
 
-    const sync = data.sincronizacion;
-    const activeSessions = Object.keys(sync.sesiones_activas || {}).length;
     if (activeSessions > 0) {
-      $('session-status').textContent = `⚡ ${activeSessions} sesión(es) de edición activa(s) detectada(s).`;
+      $('session-status').textContent = `Sesión activa: ${activeSessions} archivo(s) en edición en disco.`;
       $('session-status').className = 'session-status text-amber';
     } else {
       $('session-status').textContent = 'Monitoreo en tiempo real activo.';
@@ -481,6 +415,7 @@ async function loadFiles() {
   const data = await api('/api/files');
   state.files = data.archivos;
   renderFiles();
+  populateDiagnosticSelects();
 
   if (!state.files.length) {
     state.file = null;
@@ -519,12 +454,10 @@ async function loadAudit() {
   $('audit-state').textContent = 'Cargando auditoría e inteligencia…';
   try {
     const filterFile = $('audit-filter').value;
-    const filterDept = $('audit-dept-filter').value;
     const filterRisk = $('audit-risk-filter').value;
 
     let url = `/api/activity?limite=150`;
     if (filterFile) url += `&archivo=${encodeURIComponent(filterFile)}`;
-    if (filterDept && filterDept !== 'Todos') url += `&departamento=${encodeURIComponent(filterDept)}`;
     if (filterRisk && filterRisk !== 'Todos') url += `&nivel_riesgo=${encodeURIComponent(filterRisk)}`;
 
     const data = await api(url);
@@ -543,14 +476,16 @@ async function loadAudit() {
       const row = element('tr');
       row.append(
         element('td', 'font-bold', ev.nombre_archivo),
-        element('td', '', ev.departamento || 'General'),
         element('td', '', operations[ev.tipo_operacion] || ev.tipo_operacion),
-        element('td', '', `v${ev.numero_version}${ev.es_hito ? ' ⭐' : ''}`)
+        element('td', '', `v${ev.numero_version}${ev.es_hito ? ' [Hito]' : ''}`)
       );
 
-      // Riesgo
+      // Estado / Alerta
       const riskTd = element('td');
-      const pill = element('span', `risk-pill ${ev.nivel_riesgo?.toLowerCase() || 'normal'}`, ev.nivel_riesgo || 'NORMAL');
+      const isCritical = ev.nivel_riesgo === 'CRITICO';
+      const isWarning = ev.nivel_riesgo === 'ADVERTENCIA';
+      const pillLabel = isCritical ? 'Alerta de seguridad' : isWarning ? 'Advertencia' : 'Normal';
+      const pill = element('span', `risk-pill ${ev.nivel_riesgo?.toLowerCase() || 'normal'}`, pillLabel);
       riskTd.append(pill);
       if (ev.alerta_metadatos) {
         riskTd.append(element('small', 'text-red block', ev.alerta_metadatos));
@@ -578,51 +513,194 @@ async function loadAudit() {
   }
 }
 
+function populateDiagnosticSelects() {
+  const selFile = $('diag-file-select');
+  const selCompact = $('diag-compact-select');
+  if (!selFile || !selCompact) return;
+
+  const currentFileVal = selFile.value || state.file;
+  const currentCompactVal = selCompact.value || state.file;
+
+  selFile.replaceChildren();
+  selCompact.replaceChildren();
+
+  if (!state.files || !state.files.length) {
+    selFile.append(new Option('No hay archivos monitoreados', ''));
+    selCompact.append(new Option('No hay archivos monitoreados', ''));
+    return;
+  }
+
+  for (const f of state.files) {
+    selFile.append(new Option(f.nombre_archivo, f.nombre_archivo));
+    selCompact.append(new Option(f.nombre_archivo, f.nombre_archivo));
+  }
+
+  if (currentFileVal && state.files.some(f => f.nombre_archivo === currentFileVal)) {
+    selFile.value = currentFileVal;
+  }
+  if (currentCompactVal && state.files.some(f => f.nombre_archivo === currentCompactVal)) {
+    selCompact.value = currentCompactVal;
+  }
+}
+
+async function loadDiagnosticView() {
+  populateDiagnosticSelects();
+  try {
+    const statusData = await api('/api/status');
+    if (statusData.dropbox) {
+      const dbx = statusData.dropbox;
+      $('kpi-dbx-badge').textContent = dbx.conectado ? 'Conectado' : 'Sin conexión';
+      $('kpi-dbx-badge').className = `kpi-badge ${dbx.conectado ? 'kpi-badge-ok' : 'kpi-badge-danger'}`;
+      $('kpi-dbx-account').textContent = dbx.nombre_mostrar || dbx.email || 'Dropbox Cloud';
+      $('kpi-dbx-vault').textContent = `Bóveda: ${dbx.carpeta_boveda || '/CBAS_Pyme_Vault'}`;
+      $('kpi-storage-val').textContent = `${dbx.espacio_usado_mb || 0} MB en uso`;
+    }
+    const analytics = await api('/api/analytics').catch(() => null);
+    if (analytics) {
+      $('kpi-storage-sub').textContent = `Ahorro delta sync: ${bytes(analytics.ahorro_delta_bytes)}`;
+    }
+  } catch (err) {
+    // Continuar si falla un indicador secundario
+  }
+  await runIntegrityCheck();
+}
+
+async function runIntegrityCheck() {
+  const container = $('integrity-results');
+  container.innerHTML = '<p class="loading">Comprobando archivos locales contra Dropbox Cloud…</p>';
+  try {
+    const data = await api('/api/diagnostic/integrity');
+
+    // Actualizar indicador de cabecera y tarjeta de salud
+    const tag = $('integrity-summary-tag');
+    if (data.discrepancias > 0) {
+      tag.textContent = `${data.discrepancias} discrepancia(s) detectada(s)`;
+      tag.className = 'summary-tag tag-danger';
+      $('kpi-health-badge').textContent = 'Atención Requerida';
+      $('kpi-health-badge').className = 'kpi-badge kpi-badge-danger';
+      $('kpi-health-val').textContent = `${data.discrepancias} archivo(s) alterado(s)`;
+      $('kpi-health-sub').textContent = 'Requieren restauración desde la nube';
+    } else {
+      tag.textContent = `${data.total_archivos} archivos al día`;
+      tag.className = 'summary-tag tag-ok';
+      $('kpi-health-badge').textContent = '100% Íntegros';
+      $('kpi-health-badge').className = 'kpi-badge kpi-badge-ok';
+      $('kpi-health-val').textContent = `${data.integros} de ${data.total_archivos} verificados`;
+      $('kpi-health-sub').textContent = 'Coinciden exactamente con Dropbox Cloud';
+    }
+
+    container.replaceChildren();
+    const tableWrap = element('div', 'table-scroll');
+    const table = element('table', 'diag-health-table');
+    table.innerHTML = `
+      <colgroup>
+        <col style="width: 36%;">
+        <col style="width: 14%;">
+        <col style="width: 14%;">
+        <col style="width: 22%;">
+        <col style="width: 14%;">
+      </colgroup>
+      <thead>
+        <tr>
+          <th>Archivo</th>
+          <th>Tamaño</th>
+          <th>Versión en Nube</th>
+          <th>Estado</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+    const tbody = table.querySelector('tbody');
+
+    for (const item of data.archivos) {
+      const tr = element('tr');
+      if (item.estado !== 'INTEGRO') {
+        tr.classList.add('row-alert');
+      }
+
+      // Columna 1: Icono de formato + Nombre
+      const tdFile = element('td', 'cell-diag-file');
+      const ext = item.nombre_archivo.includes('.') ? item.nombre_archivo.split('.').pop() : '';
+      const icon = fileIcon(ext);
+      const nameSpan = element('span', 'diag-filename', item.nombre_archivo);
+      tdFile.append(icon, nameSpan);
+
+      // Columna 2: Tamaño
+      const tdSize = element('td', 'cell-diag-size', bytes(item.tamano_bytes));
+
+      // Columna 3: Versión
+      const tdVer = element('td', 'cell-diag-ver', item.version_actual ? `v${item.version_actual}` : 'Pendiente');
+
+      // Columna 4: Estado
+      const tdStatus = element('td', 'cell-diag-status');
+      let statusClass = 'badge-status-ok';
+      let statusLabel = 'Al día en Dropbox';
+
+      if (item.estado === 'DISCREPANCIA') {
+        statusClass = 'badge-status-danger';
+        statusLabel = 'Modificado / Alterado';
+      } else if (item.estado === 'PENDIENTE_SINCRONIZACION') {
+        statusClass = 'badge-status-warning';
+        statusLabel = 'Pendiente de subir';
+      } else if (item.estado === 'ERROR_LECTURA') {
+        statusClass = 'badge-status-danger';
+        statusLabel = 'Error de lectura';
+      }
+      const badge = element('span', `diag-badge ${statusClass}`, statusLabel);
+      tdStatus.append(badge);
+
+      // Columna 5: Acción rápida
+      const tdAction = element('td', 'cell-diag-action');
+      if (item.estado === 'DISCREPANCIA') {
+        const btnFix = element('button', 'button-link danger small', 'Restaurar');
+        btnFix.type = 'button';
+        btnFix.title = 'Restaurar versión limpia desde Dropbox';
+        btnFix.addEventListener('click', async () => {
+          $('diag-file-select').value = item.nombre_archivo;
+          $('btn-recovery-restore').click();
+        });
+        tdAction.append(btnFix);
+      } else {
+        const btnView = element('button', 'button-link small', 'Ver archivo');
+        btnView.type = 'button';
+        btnView.addEventListener('click', async () => {
+          switchView('files');
+          await selectFile(item.nombre_archivo);
+        });
+        tdAction.append(btnView);
+      }
+
+      tr.append(tdFile, tdSize, tdVer, tdStatus, tdAction);
+      tbody.append(tr);
+    }
+
+    tableWrap.append(table);
+    container.append(tableWrap);
+  } catch (err) {
+    container.innerHTML = `<p class="text-red">Error en la comprobación: ${err.message}</p>`;
+  }
+}
+
 function switchView(viewName) {
   state.view = viewName;
   $('workspace').hidden = viewName !== 'files';
   $('audit-view').hidden = viewName !== 'audit';
-  $('simulator-view').hidden = viewName !== 'simulator';
-  $('architecture-view').hidden = viewName !== 'architecture';
+  $('diagnostic-view').hidden = viewName !== 'diagnostic';
 
   $('tab-files').classList.toggle('active', viewName === 'files');
   $('tab-audit').classList.toggle('active', viewName === 'audit');
-  $('tab-simulator').classList.toggle('active', viewName === 'simulator');
-  $('tab-architecture').classList.toggle('active', viewName === 'architecture');
+  $('tab-diagnostic').classList.toggle('active', viewName === 'diagnostic');
 
   if (viewName === 'audit') {
     loadAnalytics();
     loadAudit();
+  } else if (viewName === 'diagnostic') {
+    loadDiagnosticView();
   }
 }
 
-// Auto-organizar carpetas departamentales
-$('btn-organize').addEventListener('click', async () => {
-  $('btn-organize').disabled = true;
-  $('btn-organize').textContent = 'Organizando…';
-  try {
-    const res = await api('/api/organize', {method: 'POST'});
-    notice(`Organización completada: ${res.total} archivo(s) clasificado(s) en departamentos.`, true);
-    await refresh();
-  } catch (err) {
-    notice(err.message);
-  } finally {
-    $('btn-organize').disabled = false;
-    $('btn-organize').textContent = 'Auto-organizar';
-  }
-});
-
-// Píldoras de departamento
-document.querySelectorAll('.dept-pill').forEach(pill => {
-  pill.addEventListener('click', () => {
-    document.querySelectorAll('.dept-pill').forEach(p => p.classList.remove('active'));
-    pill.classList.add('active');
-    state.dept = pill.getAttribute('data-dept');
-    renderFiles();
-  });
-});
-
-// Congelar / Descongelar archivo
+// Proteger / Desproteger archivo
 $('btn-toggle-protect').addEventListener('click', async () => {
   if (!state.file) return;
   const curFile = state.files.find(f => f.nombre_archivo === state.file);
@@ -644,7 +722,7 @@ $('btn-toggle-protect').addEventListener('click', async () => {
 // Compactar versiones menores
 $('btn-compact').addEventListener('click', async () => {
   if (!state.file) return;
-  if (!confirm(`¿Deseas compactar las versiones menores de «${state.file}»? Se conservarán la v1, la versión actual, todos los hitos fijados y restauraciones.`)) {
+  if (!confirm(`¿Deseas podar las versiones intermedias de «${state.file}»? Se conservarán la v1, la versión actual y todos los hitos formalmente fijados.`)) {
     return;
   }
   try {
@@ -653,7 +731,7 @@ $('btn-compact').addEventListener('click', async () => {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({mantener_recientes: 3}),
     });
-    notice(`Compactación exitosa: ${res.versiones_eliminadas} micro-versiones podadas. ${res.versiones_restantes} conservadas.`, true);
+    notice(`Poda completada: ${res.versiones_eliminadas} micro-versiones eliminadas. ${res.versiones_restantes} conservadas.`, true);
     await selectFile(state.file);
   } catch (err) {
     notice(err.message);
@@ -698,114 +776,160 @@ $('milestone-form').addEventListener('submit', async e => {
   }
 });
 
-// Modal Dictamen ISO 27001
+// Modal Reporte / Resumen de Actividad
 $('btn-export-audit').addEventListener('click', async () => {
   try {
-    $('cert-date').textContent = new Date().toUTCString();
+    $('cert-date').textContent = new Date().toLocaleString('es-ES', {
+      dateStyle: 'long',
+      timeStyle: 'short'
+    });
     const analytics = await api('/api/analytics');
     const act = await api('/api/activity?limite=20');
 
     $('cert-stats').innerHTML = `
-      <p>&bull; Total de versiones custodiadas: <strong>${$('total-versions').textContent}</strong> | Ahorro Delta WAN: <strong>${bytes(analytics.ahorro_delta_bytes)}</strong></p>
-      <p>&bull; Incidentes Críticos Detectados: <strong>${analytics.riesgos.critico || 0}</strong> | Hitos Inmutables: <strong>${analytics.total_hitos || 0}</strong></p>
+      <div class="cert-stat-item">
+        <span class="stat-num">${analytics.total_versiones ?? 0}</span>
+        <span class="stat-lbl">Versiones en nube</span>
+      </div>
+      <div class="cert-stat-item">
+        <span class="stat-num">${bytes(analytics.ahorro_delta_bytes)}</span>
+        <span class="stat-lbl">Ahorro de red</span>
+      </div>
+      <div class="cert-stat-item">
+        <span class="stat-num">${analytics.total_protegidos ?? 0}</span>
+        <span class="stat-lbl">Archivos protegidos</span>
+      </div>
+      <div class="cert-stat-item">
+        <span class="stat-num">${analytics.total_hitos ?? 0}</span>
+        <span class="stat-lbl">Hitos fijados</span>
+      </div>
     `;
 
     $('cert-rows').replaceChildren();
-    for (const ev of act.eventos) {
+    for (const ev of (act.eventos || [])) {
       const tr = element('tr');
-      tr.innerHTML = `
-        <td>${ev.nombre_archivo}</td>
-        <td>${ev.departamento || 'General'}</td>
-        <td>v${ev.numero_version}</td>
-        <td>${ev.tipo_operacion}</td>
-        <td class="font-mono">${(ev.content_hash || '').substring(0, 16)}...</td>
-        <td>${ev.usuario_so} (${ev.direccion_ip})</td>
-        <td>${ev.fecha_registro_utc}</td>
-      `;
+
+      const tdFile = element('td', 'cell-filename', ev.nombre_archivo);
+      const tdVer = element('td', 'cell-ver', `v${ev.numero_version}`);
+      const tdOp = element('td', 'cell-action', operations[ev.tipo_operacion] || ev.tipo_operacion);
+
+      const tdUser = element('td', 'cell-user');
+      tdUser.append(document.createTextNode(ev.usuario_so || 'Sistema '));
+      if (ev.nombre_equipo) {
+        const sub = element('span', 'cell-sub', `(${ev.nombre_equipo})`);
+        tdUser.append(sub);
+      }
+
+      const tdDate = element('td', 'cell-date', date(ev.fecha_registro_utc));
+
+      tr.append(tdFile, tdVer, tdOp, tdUser, tdDate);
       $('cert-rows').append(tr);
     }
     $('cert-dialog').showModal();
   } catch (err) {
-    notice(err.message);
+    notice(`No se pudo generar el resumen: ${err.message}`);
   }
 });
 
 $('btn-close-cert').addEventListener('click', () => $('cert-dialog').close());
 $('btn-print-window').addEventListener('click', () => window.print());
 
-// Simulador de Ciberataque y Resiliencia
-$('btn-sim-attack').addEventListener('click', async () => {
-  $('sim-attack-result').hidden = false;
-  $('sim-attack-result').textContent = 'Ejecutando infección simulada por ransomware LockBit…';
-  try {
-    const res = await api('/api/simulator/ransomware', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({nombre_archivo: state.file, modo: 'simular'}),
-    });
-    $('sim-attack-result').innerHTML = `⚠️ <strong>ALERTA GENERADA:</strong> ${res.mensaje}<br>Se alteró el archivo en disco. El agente detectó la firma y la catalogó como CRÍTICO.`;
-    await refresh();
-    await selectFile(res.nombre_archivo);
-  } catch (err) {
-    $('sim-attack-result').textContent = `Error: ${err.message}`;
-  }
-});
+// Vista de Salud y Recuperación
+$('btn-check-integrity').addEventListener('click', runIntegrityCheck);
 
-$('btn-sim-rollback').addEventListener('click', async () => {
-  $('sim-attack-result').hidden = false;
-  $('sim-attack-result').textContent = 'Ejecutando reversión transaccional en Dropbox Cloud API…';
-  try {
-    const res = await api('/api/simulator/ransomware', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({nombre_archivo: state.file, modo: 'rollback'}),
-    });
-    $('sim-attack-result').innerHTML = `✅ <strong>DESASTRE NEUTRALIZADO:</strong> ${res.mensaje}<br>Se restauró el archivo a su estado limpio anterior.`;
-    await refresh();
-    await selectFile(res.nombre_archivo);
-  } catch (err) {
-    $('sim-attack-result').textContent = `Error: ${err.message}`;
-  }
-});
-
-$('btn-sim-tamper').addEventListener('click', async () => {
-  if (!state.file) {
-    alert('Selecciona primero un archivo en el explorador.');
+$('btn-recovery-alter').addEventListener('click', async () => {
+  const chosenFile = $('diag-file-select')?.value || state.file;
+  if (!chosenFile) {
+    notice('Selecciona un archivo para la prueba.');
     return;
   }
-  $('sim-tamper-result').hidden = false;
-  $('sim-tamper-result').textContent = 'Congelando archivo y simulando alteración no autorizada…';
+  const resBox = $('recovery-test-result');
+  resBox.hidden = false;
+  resBox.className = 'lab-status-box status-loading';
+  resBox.textContent = `Aplicando alteración de prueba en «${chosenFile}»…`;
   try {
-    // 1. Proteger
-    await api(`/api/files/${encodeURIComponent(state.file)}/protect`, {
+    const res = await api('/api/diagnostic/recovery-test', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({protegido: true}),
+      body: JSON.stringify({nombre_archivo: chosenFile, modo: 'alterar'}),
     });
-    // 2. Modificar
-    await api(`/api/files/${encodeURIComponent(state.file)}/save-content`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({contenido_texto: 'ALTERACION NO AUTORIZADA SOBRE BALANCE AUDITADO\n'}),
-    });
-    $('sim-tamper-result').innerHTML = `🚨 <strong>VIOLACIÓN DETECTADA:</strong> El archivo estaba congelado. El motor forense registró el evento con nivel <strong>CRÍTICO</strong> y alertó al auditor.`;
+    resBox.className = 'lab-status-box status-alter';
+    resBox.innerHTML = `
+      <strong>Paso 2 completado: Archivo alterado</strong><br>
+      Se introdujo una modificación en el archivo local «${chosenFile}». El agente en segundo plano detectó la alteración y generó alerta de seguridad.<br>
+      Comprueba arriba en la tabla cómo se marca la discrepancia en rojo.<br>
+      <em>Presiona ahora <strong>Paso 3 (Restaurar Versión Sana)</strong> para revertir el daño usando la copia de Dropbox.</em>
+    `;
     await refresh();
-    await selectFile(state.file);
+    await runIntegrityCheck();
   } catch (err) {
-    $('sim-tamper-result').textContent = `Error: ${err.message}`;
+    resBox.className = 'lab-status-box status-error';
+    resBox.textContent = `Error: ${err.message}`;
   }
 });
 
-$('btn-sim-crash').addEventListener('click', () => {
-  if (!state.file) {
-    alert('Selecciona un archivo primero.');
+$('btn-recovery-restore').addEventListener('click', async () => {
+  const chosenFile = $('diag-file-select')?.value || state.file;
+  if (!chosenFile) {
+    notice('Selecciona un archivo para la prueba.');
     return;
   }
-  const key = `cbas_draft_${state.file}`;
-  localStorage.setItem(key, `// TRABAJO EN CURSO PREVIO AL APAGÓN DE ENERGÍA\nTotal estimado: 999999 Bs\n`);
-  $('sim-crash-result').hidden = false;
-  $('sim-crash-result').innerHTML = `⚡ <strong>SIMULACIÓN DE APAGÓN:</strong> Se guardó un borrador no enviado en <code>localStorage</code>.<br>Ve a la pestaña <em>"Editor & Autoguardado"</em> de «${state.file}» para ver el banner de rescate.`;
-  changeMode('editor');
+  const resBox = $('recovery-test-result');
+  resBox.hidden = false;
+  resBox.className = 'lab-status-box status-loading';
+  resBox.textContent = `Descargando y restaurando versión sana desde Dropbox para «${chosenFile}»…`;
+  try {
+    const res = await api('/api/diagnostic/recovery-test', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nombre_archivo: chosenFile, modo: 'restaurar'}),
+    });
+    resBox.className = 'lab-status-box status-restored';
+    resBox.innerHTML = `
+      <strong>Paso 3 completado con éxito: Archivo restaurado</strong><br>
+      Se descargó la versión limpia custodiada en Dropbox Cloud y se reparó el archivo local «${chosenFile}».<br>
+      La integridad ha quedado restablecida al 100%.
+    `;
+    await refresh();
+    await runIntegrityCheck();
+  } catch (err) {
+    resBox.className = 'lab-status-box status-error';
+    resBox.textContent = `Error: ${err.message}`;
+  }
+});
+
+$('btn-run-compact').addEventListener('click', async () => {
+  const targetFile = $('diag-compact-select')?.value || state.file;
+  if (!targetFile) {
+    notice('Selecciona un archivo para podar.');
+    return;
+  }
+  if (!confirm(`¿Deseas optimizar las versiones de «${targetFile}»? Se eliminarán borradores intermedios pero se conservarán la v1, la versión actual y todos los hitos.`)) {
+    return;
+  }
+  const resBox = $('compact-result');
+  resBox.hidden = false;
+  resBox.className = 'lab-status-box status-loading';
+  resBox.textContent = `Optimizando árbol de versiones para «${targetFile}»…`;
+  try {
+    const res = await api(`/api/files/${encodeURIComponent(targetFile)}/compact`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mantener_recientes: 3}),
+    });
+    resBox.className = 'lab-status-box status-compacted';
+    resBox.innerHTML = `
+      <strong>Optimización completada</strong><br>
+      Se podaron ${res.versiones_eliminadas} micro-versiones intermedias.<br>
+      Se conservaron ${res.versiones_restantes} versiones importantes (incluyendo versión inicial e hitos).
+    `;
+    notice(`Optimización lista para «${targetFile}»: ${res.versiones_eliminadas} podadas.`, true);
+    await refresh();
+    await runIntegrityCheck();
+  } catch (err) {
+    resBox.className = 'lab-status-box status-error';
+    resBox.textContent = `Error: ${err.message}`;
+  }
 });
 
 // Descargar versión
@@ -830,7 +954,7 @@ $('download').addEventListener('click', async e => {
   } catch (err) {
     notice(err.message);
   } finally {
-    $('download').textContent = 'Descargar versión';
+    $('download').textContent = 'Descargar copia';
   }
 });
 
@@ -877,19 +1001,16 @@ $('restore-form').addEventListener('submit', async e => {
 // Eventos de barra de navegación
 $('tab-files').addEventListener('click', () => switchView('files'));
 $('tab-audit').addEventListener('click', () => switchView('audit'));
-$('tab-simulator').addEventListener('click', () => switchView('simulator'));
-$('tab-architecture').addEventListener('click', () => switchView('architecture'));
+$('tab-diagnostic').addEventListener('click', () => switchView('diagnostic'));
 
 $('show-content').addEventListener('click', () => changeMode('content'));
 $('show-diff').addEventListener('click', () => changeMode('diff'));
-$('show-editor').addEventListener('click', () => changeMode('editor'));
 
 $('search').addEventListener('input', renderFiles);
 $('compare').addEventListener('change', () => {
   if (state.version) selectVersion(state.version);
 });
 $('audit-filter').addEventListener('change', loadAudit);
-$('audit-dept-filter').addEventListener('change', loadAudit);
 $('audit-risk-filter').addEventListener('change', loadAudit);
 
 $('dismiss-notice').addEventListener('click', () => {
@@ -904,7 +1025,8 @@ async function refresh() {
     await Promise.all([
       loadStatus(),
       loadFiles(),
-      state.view === 'audit' ? Promise.all([loadAnalytics(), loadAudit()]) : Promise.resolve()
+      state.view === 'audit' ? Promise.all([loadAnalytics(), loadAudit()]) : Promise.resolve(),
+      state.view === 'diagnostic' ? runIntegrityCheck() : Promise.resolve()
     ]);
     $('last-refresh').textContent = `Actualizado ${new Intl.DateTimeFormat('es', {timeStyle: 'short'}).format(new Date())} · cada 15 s`;
   } catch (err) {

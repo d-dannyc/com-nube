@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>CBAS — Cloud Backup & Audit System</title>
+  <title>CBAS — Control de Versiones y Auditoría Cloud</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
   <script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
@@ -15,7 +15,7 @@
     <a href="/" class="brand" aria-label="CBAS, inicio">
       <svg class="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="m16 3 12 7v12l-12 7-12-7V10L16 3Z" stroke="currentColor" stroke-width="2"/><path d="m4 10 12 7 12-7M16 17v12M10 7l12 7v8" stroke="currentColor" stroke-width="2"/></svg>
       <div>
-        <span>CBAS<span class="brand-sub">Cloud Backup & Storage Governance · PYME Enterprise</span></span>
+        <span>CBAS<span class="brand-sub">Control de Versiones y Auditoría Cloud · PYME Enterprise</span></span>
       </div>
     </a>
     <div class="header-actions">
@@ -27,23 +27,22 @@
   <main>
     <div class="page-heading">
       <div>
-        <h1>Gobierno y Respaldo Cloud</h1>
-        <p>Sistema descentralizado de versiones, auditoría forense y resiliencia para PYMEs basado en Dropbox Cloud API v2.</p>
+        <h1>Control de Versiones y Auditoría Cloud</h1>
+        <p>Monitoreo continuo de <code>directorio_pyme/</code> con sincronización desacoplada en Dropbox API v2 y trazabilidad forense.</p>
       </div>
       <div class="summary" aria-label="Resumen de respaldos">
-        <span><strong id="total-files">—</strong> archivos</span>
-        <span><strong id="total-versions">—</strong> versiones</span>
-        <span><strong id="total-milestones">0</strong> hitos</span>
-        <span><strong id="total-savings">—</strong> ahorrados en red</span>
+        <span><strong id="total-files">—</strong> archivos monitoreados</span>
+        <span><strong id="total-versions">—</strong> versiones registradas</span>
+        <span><strong id="total-milestones">0</strong> hitos aprobados</span>
+        <span><strong id="total-savings">—</strong> ahorro delta sync</span>
       </div>
     </div>
     <div id="notice" class="notice" role="status" aria-live="polite" hidden><span id="notice-text"></span><button id="dismiss-notice" type="button" aria-label="Cerrar aviso">Cerrar</button></div>
     
     <nav class="view-tabs" aria-label="Vistas">
       <button id="tab-files" class="view-tab active" aria-current="page" type="button">Explorador y Versiones</button>
-      <button id="tab-audit" class="view-tab" type="button">Inteligencia y Auditoría</button>
-      <button id="tab-simulator" class="view-tab" type="button">Laboratorio de Resiliencia</button>
-      <button id="tab-architecture" class="view-tab" type="button">Arquitectura Cloud</button>
+      <button id="tab-audit" class="view-tab" type="button">Bitácora de Auditoría</button>
+      <button id="tab-diagnostic" class="view-tab" type="button">Salud y Recuperación</button>
       <span id="sync-label" class="sync-label">Conectando con el agente…</span>
     </nav>
 
@@ -51,17 +50,6 @@
     <section id="workspace" class="workspace" aria-label="Explorador de respaldos" tabindex="-1">
       <aside class="files-pane">
         <div class="pane-heading">
-          <h2>Departamentos</h2>
-          <button id="btn-organize" class="button-link small" type="button" title="Clasificar archivos sueltos en carpetas">Auto-organizar</button>
-        </div>
-        <div class="dept-pills" id="dept-pills">
-          <button class="dept-pill active" data-dept="Todos" type="button">Todos</button>
-          <button class="dept-pill" data-dept="Contabilidad" type="button">Contabilidad</button>
-          <button class="dept-pill" data-dept="Recursos_Humanos" type="button">RRHH</button>
-          <button class="dept-pill" data-dept="Legal" type="button">Legal</button>
-          <button class="dept-pill" data-dept="Sistemas_TI" type="button">Sistemas</button>
-        </div>
-        <div class="pane-heading sub-heading">
           <h2>Archivos</h2>
           <span id="file-count" class="count">0</span>
         </div>
@@ -78,15 +66,14 @@
         <div id="no-selection" class="empty document-empty">
           <svg viewBox="0 0 64 64" fill="none" aria-hidden="true"><path d="M16 8h22l12 12v36H16V8Z" stroke="currentColor" stroke-width="2"/><path d="M38 8v14h12M24 32h18M24 40h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           <h2>Elige un archivo</h2>
-          <p>Selecciona un archivo del panel izquierdo para consultar sus versiones o editarlo.</p>
+          <p>Selecciona un archivo del panel izquierdo para consultar sus revisiones, comparar cambios o restaurarlo.</p>
         </div>
 
         <div id="document" hidden>
           <div class="document-heading">
             <div class="badges-row">
-              <span id="file-dept" class="dept-badge">Contabilidad</span>
               <span id="file-type" class="type-label">CSV</span>
-              <button id="btn-toggle-protect" class="protect-btn" type="button" title="Congela el archivo para alertar sobre alteraciones no autorizadas">🔓 Documento abierto</button>
+              <button id="btn-toggle-protect" class="protect-btn" type="button" title="Alternar protección de auditoría">[Edición permitida]</button>
             </div>
             <h2 id="file-name"></h2>
             <p id="file-meta"></p>
@@ -97,7 +84,6 @@
             <div class="content-tabs" role="group" aria-label="Vista del documento">
               <button id="show-content" class="content-tab active" type="button" aria-pressed="true">Contenido</button>
               <button id="show-diff" class="content-tab" type="button" aria-pressed="false">Cambios (Diff)</button>
-              <button id="show-editor" class="content-tab" type="button" aria-pressed="false">Editor & Autoguardado</button>
             </div>
             <label id="compare-label" class="compare-label" hidden>Comparar con <select id="compare"><option value="prev">versión anterior</option><option value="current">versión actual</option></select></label>
           </div>
@@ -113,26 +99,10 @@
             <div id="diff-lines" class="diff-lines" tabindex="0" aria-label="Comparación de versiones"></div>
           </div>
 
-          <!-- Editor en vivo con auto-recuperación ante apagones -->
-          <div id="editor-view" class="editor-view" hidden>
-            <div id="draft-recovery-alert" class="recovery-alert" hidden>
-              <span>⚡ <strong>Cierre inesperado detectado:</strong> Existe un borrador local no guardado.</span>
-              <div>
-                <button id="btn-restore-draft" class="button small secondary" type="button">Restaurar borrador</button>
-                <button id="btn-dismiss-draft" class="button small text-btn" type="button">Descartar</button>
-              </div>
-            </div>
-            <textarea id="file-editor" class="file-editor" spellcheck="false" placeholder="Escribe aquí el contenido..."></textarea>
-            <div class="editor-bar">
-              <span id="editor-stats" class="editor-stats">Líneas: 0 · Caracteres: 0 · Autoguardado local activo</span>
-              <button id="btn-save-content" class="button primary" type="button">Guardar cambios en Dropbox</button>
-            </div>
-          </div>
-
           <div class="document-actions">
-            <a id="download" class="button secondary" href="#">Descargar versión</a>
-            <button id="restore" class="button primary" type="button">Restaurar versión</button>
-            <button id="btn-compact" class="button secondary" type="button" title="Poda micro-guardados antiguos conservando hitos, v1 y versión actual">Compactar versiones</button>
+            <a id="download" class="button secondary" href="#">Descargar copia</a>
+            <button id="restore" class="button primary" type="button">Restaurar versión en disco</button>
+            <button id="btn-compact" class="button secondary" type="button" title="Poda micro-guardados antiguos conservando hitos, v1 y versión actual">Poda de versiones</button>
           </div>
           <details class="technical">
             <summary>Metadatos y Trazabilidad Forense</summary>
@@ -146,64 +116,55 @@
           <h2>Historial</h2>
           <span id="version-count" class="count">0</span>
         </div>
-        <p class="pane-description">Revisiones en Dropbox Cloud API.</p>
+        <p class="pane-description">Revisiones custodiadas en Dropbox Cloud API.</p>
         <div id="history" class="history"><p class="empty small">Selecciona un archivo para ver sus versiones.</p></div>
       </aside>
     </section>
 
-    <!-- VISTA 2: INTELIGENCIA DE METADATOS Y AUDITORÍA FORENSE -->
+    <!-- VISTA 2: REGISTRO DE ACTIVIDAD Y AUDITORÍA -->
     <section id="audit-view" class="audit-view" aria-label="Actividad y auditoría" hidden>
       <div class="audit-heading">
         <div>
-          <h2>Inteligencia de Metadatos y Auditoría</h2>
-          <p>Trazabilidad forense, detección de anomalías y analítica cloud de la PYME.</p>
+          <h2>Registro de Actividad y Auditoría</h2>
+          <p>Historial completo de quién guardó, modificó o restauró cada archivo en la nube, con fecha y computadora.</p>
         </div>
         <button id="btn-export-audit" class="button primary" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-          <span>Exportar Dictamen de Auditoría ISO 27001</span>
+          <span>Imprimir Resumen de Actividad</span>
         </button>
       </div>
 
-      <!-- Tarjetas Analíticas de Metadatos -->
+      <!-- Tarjetas de Métricas -->
       <div class="analytics-grid" id="analytics-grid">
         <div class="analytic-card">
-          <span class="analytic-label">Ahorro WAN (Delta Sync)</span>
+          <span class="analytic-label">Internet Ahorrado al Respaldar</span>
           <strong id="stat-wan-savings" class="analytic-val">—</strong>
-          <span class="analytic-sub">Gracias a bloques de 4 MB de Dropbox</span>
+          <span class="analytic-sub">Datos que no se volvieron a subir porque no cambiaron</span>
         </div>
         <div class="analytic-card">
-          <span class="analytic-label">Documentos Protegidos</span>
+          <span class="analytic-label">Archivos Protegidos</span>
           <strong id="stat-protected-files" class="analytic-val">0</strong>
-          <span class="analytic-sub">Balances e informes congelados</span>
+          <span class="analytic-sub">Documentos con aviso ante modificaciones</span>
         </div>
         <div class="analytic-card">
-          <span class="analytic-label">Hitos de Auditoría</span>
+          <span class="analytic-label">Versiones Guardadas (Hitos)</span>
           <strong id="stat-total-milestones" class="analytic-val">0</strong>
-          <span class="analytic-sub">Versiones clave fijadas inmutables</span>
+          <span class="analytic-sub">Revisiones clave que nunca se borrarán</span>
         </div>
         <div class="analytic-card">
-          <span class="analytic-label">Alertas de Integridad</span>
+          <span class="analytic-label">Alertas Registradas</span>
           <strong id="stat-alerts-count" class="analytic-val">0</strong>
-          <span class="analytic-sub">Alteraciones críticas o ransomware</span>
+          <span class="analytic-sub">Modificaciones no autorizadas detectadas</span>
         </div>
       </div>
 
       <div class="audit-filters-bar">
-        <label>Departamento:
-          <select id="audit-dept-filter">
-            <option value="Todos">Todos los departamentos</option>
-            <option value="Contabilidad">Contabilidad</option>
-            <option value="Recursos_Humanos">Recursos Humanos</option>
-            <option value="Legal">Legal</option>
-            <option value="Sistemas_TI">Sistemas TI</option>
-          </select>
-        </label>
-        <label>Nivel de Riesgo:
+        <label>Nivel de Alerta:
           <select id="audit-risk-filter">
-            <option value="Todos">Todos los niveles</option>
-            <option value="NORMAL">Normal</option>
-            <option value="ADVERTENCIA">Advertencias</option>
-            <option value="CRITICO">Crítico (Anomalías)</option>
+            <option value="Todos">Todas las operaciones</option>
+            <option value="NORMAL">Operaciones normales</option>
+            <option value="ADVERTENCIA">Alertas leves</option>
+            <option value="CRITICO">Alertas de seguridad (Modificaciones indebidas)</option>
           </select>
         </label>
         <label>Archivo:
@@ -220,12 +181,11 @@
           <thead>
             <tr>
               <th>Archivo</th>
-              <th>Departamento</th>
-              <th>Operación</th>
+              <th>Operación Realizada</th>
               <th>Versión / Hito</th>
-              <th>Riesgo & Alerta</th>
-              <th>Usuario / Equipo / IP</th>
-              <th>Fecha UTC</th>
+              <th>Estado / Alerta</th>
+              <th>Usuario y Computadora</th>
+              <th>Fecha y Hora (UTC)</th>
               <th>Acción</th>
             </tr>
           </thead>
@@ -234,86 +194,137 @@
       </div>
     </section>
 
-    <!-- VISTA 3: LABORATORIO DE RESILIENCIA CLOUD -->
-    <section id="simulator-view" class="simulator-view" aria-label="Laboratorio de resiliencia" hidden>
-      <div class="sim-header">
-        <h2>Laboratorio de Ciberresiliencia y Recuperación ante Desastres</h2>
-        <p>Demostración práctica en vivo de resiliencia ante ciberataques, manipulación no autorizada y cortes de energía.</p>
-      </div>
-
-      <div class="sim-grid">
-        <!-- Tarjeta 1: Ataque Ransomware -->
-        <div class="sim-card border-red">
-          <div class="sim-card-header text-red">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-            <h3>Escenario 1: Ataque de Ransomware y Rollback Inmediato</h3>
-          </div>
-          <p>Simula que un malware secuestra y cifra un archivo local de la empresa. Observa cómo el motor de metadatos detecta la firma maliciosa y permite revertir el daño en 1 clic.</p>
-          <div class="sim-actions">
-            <button id="btn-sim-attack" class="button danger" type="button">1. Ejecutar Cifrado Malicioso</button>
-            <button id="btn-sim-rollback" class="button success" type="button">2. Revertir a Versión Limpia (Rollback)</button>
-          </div>
-          <div id="sim-attack-result" class="sim-result" hidden></div>
+    <!-- VISTA 3: SALUD Y RECUPERACIÓN -->
+    <section id="diagnostic-view" class="diagnostic-view" aria-label="Salud y Recuperación" hidden>
+      <div class="diagnostic-header">
+        <div>
+          <h2>Salud de Archivos y Recuperación</h2>
+          <p>Monitoreo continuo de archivos, verificación contra la nube y pruebas asistidas de recuperación ante alteraciones o pérdida de datos.</p>
         </div>
-
-        <!-- Tarjeta 2: Violación de Archivo Congelado -->
-        <div class="sim-card border-amber">
-          <div class="sim-card-header text-amber">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <h3>Escenario 2: Alteración de Documento Auditado (Congelado)</h3>
-          </div>
-          <p>Los balances y contratos cerrados se marcan como <em>Protegidos</em>. Si un empleado o atacante intenta modificarlos en disco, el sistema genera de inmediato una alerta forense de nivel <strong>CRÍTICO</strong>.</p>
-          <div class="sim-actions">
-            <button id="btn-sim-tamper" class="button secondary" type="button">Simular Alteración de Balance Protegido</button>
-          </div>
-          <div id="sim-tamper-result" class="sim-result" hidden></div>
-        </div>
-
-        <!-- Tarjeta 3: Resiliencia ante Apagones / Crash Recovery -->
-        <div class="sim-card border-blue">
-          <div class="sim-card-header text-blue">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-            <h3>Escenario 3: Corte de Energía / Cierre sin Guardar</h3>
-          </div>
-          <p>¿Qué pasa si se corta la luz mientras un usuario redacta un documento? El panel web mantiene un buffer de contingencia en <code>localStorage</code> y el agente detecta archivos de bloqueo temporales huérfanos.</p>
-          <div class="sim-actions">
-            <button id="btn-sim-crash" class="button secondary" type="button">Probar Buffer de Rescate ante Apagón</button>
-          </div>
-          <div id="sim-crash-result" class="sim-result" hidden></div>
+        <div class="header-refresh-action">
+          <button id="btn-check-integrity" class="button primary" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" aria-hidden="true"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+            <span>Comprobar Estado Ahora</span>
+          </button>
         </div>
       </div>
-    </section>
 
-    <!-- VISTA 4: ARQUITECTURA CLOUD (FUNDAMENTACIÓN ACADÉMICA) -->
-    <section id="architecture-view" class="architecture-view" aria-label="Arquitectura Cloud" hidden>
-      <div class="arch-header">
-        <h2>Principios Arquitectónicos de Cloud Computing (NIST & Dropbox Platform)</h2>
-        <p>Fundamentación teórica y desacoplamiento implementado en el sistema CBAS.</p>
+      <!-- Módulo 1: KPIs de Conexión y Salud en Tiempo Real -->
+      <div class="health-kpis-grid" id="health-kpis">
+        <div class="health-kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Conexión con Dropbox</span>
+            <span id="kpi-dbx-badge" class="kpi-badge kpi-badge-ok">Conectado</span>
+          </div>
+          <strong id="kpi-dbx-account" class="kpi-val">—</strong>
+          <span id="kpi-dbx-vault" class="kpi-sub">Bóveda: /CBAS_Pyme_Vault</span>
+        </div>
+
+        <div class="health-kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Estado de Archivos</span>
+            <span id="kpi-health-badge" class="kpi-badge kpi-badge-ok">100% Íntegros</span>
+          </div>
+          <strong id="kpi-health-val" class="kpi-val">—</strong>
+          <span class="kpi-sub" id="kpi-health-sub">Todos coinciden con la nube</span>
+        </div>
+
+        <div class="health-kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Agente de Monitoreo</span>
+            <span class="kpi-badge kpi-badge-ok">Activo</span>
+          </div>
+          <strong class="kpi-val">En segundo plano</strong>
+          <span class="kpi-sub">Vigila la carpeta <code>directorio_pyme/</code></span>
+        </div>
+
+        <div class="health-kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Espacio en la Nube</span>
+            <span class="kpi-badge kpi-badge-info">Dropbox API</span>
+          </div>
+          <strong id="kpi-storage-val" class="kpi-val">—</strong>
+          <span id="kpi-storage-sub" class="kpi-sub">Ahorro delta sync: —</span>
+        </div>
       </div>
 
-      <div class="arch-cards">
-        <div class="arch-card">
-          <h3>1. Desacoplamiento de Almacenamiento (Storage Decoupling)</h3>
-          <p><strong>Plano de Datos Binarios:</strong> Los archivos reales viajan directamente hacia la infraestructura distribuida de Dropbox (Magic Pocket / AWS S3) con cifrado AES-256. El servidor local no hospeda gigabytes pesados.</p>
-          <p><strong>Plano de Control y Metadatos:</strong> El backend local gestiona únicamente los registros criptográficos livianos (hashes SHA-256 de 4 MB, revisiones <code>rev</code>, IPs de auditoría y timestamps UTC) garantizando respuesta en milisegundos.</p>
+      <!-- Módulo 2: Tabla de Integridad y Sincronización -->
+      <div class="diag-section-box">
+        <div class="diag-section-header">
+          <div>
+            <h3>Verificación de Archivos Locales vs Dropbox</h3>
+            <p>Compara el contenido de cada archivo físico contra su copia respaldada en la nube para detectar desincronizaciones o modificaciones indebidas.</p>
+          </div>
+          <div id="integrity-summary-tag" class="summary-tag">Comprobando…</div>
         </div>
 
-        <div class="arch-card">
-          <h3>2. Algoritmo Delta Sync y Bloques de 4 MB</h3>
-          <p>El estándar oficial <code>content_hash</code> de Dropbox divide cualquier archivo en fragmentos fijos de <strong>4,194,304 bytes (4 MB)</strong>:</p>
-          <code class="block-code font-mono">content_hash = SHA256( SHA256(Bloque 1) || SHA256(Bloque 2) || ... )</code>
-          <p>Al editar una sola celda de un balance contable, únicamente se transmite por internet el bloque alterado, ahorrando más del 90% de ancho de banda.</p>
+        <div id="integrity-results" class="diag-results-wrap"></div>
+      </div>
+
+      <!-- Módulo 3 y 4 en Grid de 2 Columnas -->
+      <div class="diag-split-grid">
+        <!-- Módulo 3: Laboratorio Interactivo de Recuperación -->
+        <div class="diag-card lab-card">
+          <div class="diag-card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+            <div>
+              <h3>Prueba Asistida de Recuperación</h3>
+              <p>Demostración práctica: comprueba cómo el sistema detecta daños en un archivo local y recupera la versión sana desde Dropbox en 1 clic.</p>
+            </div>
+          </div>
+
+          <div class="lab-step">
+            <label for="diag-file-select" class="step-label">
+              <span class="step-badge">Paso 1</span>
+              <span>Elige el archivo a evaluar:</span>
+            </label>
+            <select id="diag-file-select" class="diag-select"></select>
+          </div>
+
+          <div class="lab-actions-grid">
+            <div class="lab-action-item">
+              <span class="step-badge step-alter">Paso 2</span>
+              <p class="action-desc">Aplica una alteración controlada al archivo en el disco local.</p>
+              <button id="btn-recovery-alter" class="button danger" type="button">Simular Daño en Archivo</button>
+            </div>
+
+            <div class="lab-action-item">
+              <span class="step-badge step-restore">Paso 3</span>
+              <p class="action-desc">Descarga la versión sana custodiada en Dropbox y reemplaza el archivo dañado.</p>
+              <button id="btn-recovery-restore" class="button success" type="button">Restaurar Versión Sana</button>
+            </div>
+          </div>
+
+          <div id="recovery-test-result" class="lab-status-box" hidden></div>
         </div>
 
-        <div class="arch-card">
-          <h3>3. Las 5 Características Esenciales NIST SP 800-145</h3>
-          <ul>
-            <li><strong>Autoservicio bajo demanda:</strong> Restauración en 1 clic y consulta sin intermediarios.</li>
-            <li><strong>Acceso amplio a la red:</strong> Acceso seguro por TLS 1.3 desde cualquier terminal de la PYME.</li>
-            <li><strong>Agrupación de recursos:</strong> Almacenamiento multi-inquilino elástico en Dropbox Cloud.</li>
-            <li><strong>Elasticidad rápida:</strong> Escala de kilobytes a terabytes sin gestionar servidores físicos.</li>
-            <li><strong>Servicio medido:</strong> Supervisión y cuantificación exacta de bytes y eventos por versión.</li>
-          </ul>
+        <!-- Módulo 4: Optimización y Mantenimiento de Versiones -->
+        <div class="diag-card compact-card">
+          <div class="diag-card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+            <div>
+              <h3>Optimización de Versiones (Poda)</h3>
+              <p>Libera espacio eliminando borradores intermedios antiguos de un archivo, conservando siempre la primera versión (v1), la versión activa y los hitos importantes.</p>
+            </div>
+          </div>
+
+          <div class="lab-step">
+            <label for="diag-compact-select" class="step-label">
+              <span class="step-badge">Archivo</span>
+              <span>Selecciona el archivo a optimizar:</span>
+            </label>
+            <select id="diag-compact-select" class="diag-select"></select>
+          </div>
+
+          <div class="compact-info-box">
+            <p><strong>Regla de conservación:</strong> Nunca se borrarán los hitos aprobados ni la versión inicial. Solo se podan micro-guardados de prueba intermedios.</p>
+          </div>
+
+          <div class="compact-action-row">
+            <button id="btn-run-compact" class="button secondary" type="button">Optimizar Versiones</button>
+          </div>
+
+          <div id="compact-result" class="lab-status-box" hidden></div>
         </div>
       </div>
     </section>
@@ -354,39 +365,69 @@
     </form>
   </dialog>
 
-  <!-- Diálogo de Certificado / Dictamen de Auditoría ISO 27001 -->
+  <!-- Diálogo de Resumen de Actividad / Reporte Imprimible -->
   <dialog id="cert-dialog" class="cert-dialog" aria-labelledby="cert-title">
-    <div class="cert-box" id="cert-print-area">
-      <div class="cert-header">
-        <div>
-          <h3>DICTAMEN OFICIAL DE AUDITORÍA FORENSE Y TRAZABILIDAD CLOUD</h3>
-          <p class="cert-sub">Conforme a Norma ISO/IEC 27001 (Control A.12.4) & COBIT 2019</p>
+    <div class="cert-container">
+      <div class="cert-box" id="cert-print-area">
+        <div class="cert-header">
+          <div class="cert-header-main">
+            <h3 id="cert-title">Resumen de Actividad y Respaldos</h3>
+            <p class="cert-sub">Historial de cambios y copias guardadas en la nube</p>
+          </div>
+          <div class="cert-badge">ACTUALIZADO</div>
         </div>
-        <div class="cert-badge">AUDITADO</div>
-      </div>
-      <hr>
-      <div class="cert-body">
-        <p><strong>Organización:</strong> Comercial Andina S.R.L. &bull; <strong>Plataforma:</strong> CBAS Cloud Backup & Audit System</p>
-        <p><strong>Proveedor Cloud:</strong> Dropbox Cloud API v2 (Infraestructura Magic Pocket / Storage Decoupling)</p>
-        <p><strong>Fecha de Emisión:</strong> <span id="cert-date">—</span></p>
-        <h4>Resumen de Integridad y Métricas de Seguridad</h4>
+
+        <div class="cert-meta-bar">
+          <div><span class="meta-label">Carpeta local:</span> <code>directorio_pyme/</code></div>
+          <div><span class="meta-label">Servicio en la nube:</span> <span>Dropbox Cloud</span></div>
+          <div><span class="meta-label">Fecha del reporte:</span> <span id="cert-date">—</span></div>
+        </div>
+
+        <div class="cert-section-title">Resumen de estados</div>
         <div class="cert-stats" id="cert-stats"></div>
-        <h4>Últimos Registros Criptográficos Auditados</h4>
-        <table class="cert-table">
-          <thead>
-            <tr><th>Archivo</th><th>Depto</th><th>Versión</th><th>Operación</th><th>Hash SHA-256</th><th>Usuario / IP</th><th>Fecha UTC</th></tr>
-          </thead>
-          <tbody id="cert-rows"></tbody>
-        </table>
+
+        <div class="cert-section-title">Últimos movimientos registrados</div>
+        <div class="cert-table-wrap">
+          <table class="cert-table">
+            <colgroup>
+              <col class="col-file">
+              <col class="col-ver">
+              <col class="col-action">
+              <col class="col-user">
+              <col class="col-date">
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Archivo</th>
+                <th>Versión</th>
+                <th>Acción</th>
+                <th>Equipo / Usuario</th>
+                <th>Fecha y Hora</th>
+              </tr>
+            </thead>
+            <tbody id="cert-rows"></tbody>
+          </table>
+        </div>
+
         <div class="cert-signatures">
-          <div><span class="sign-line"></span><p>Responsable de Seguridad Cloud</p></div>
-          <div><span class="sign-line"></span><p>Auditor de Sistemas de Información</p></div>
+          <div class="sign-block">
+            <div class="sign-line"></div>
+            <p>Responsable del Respaldo</p>
+          </div>
+          <div class="sign-block">
+            <div class="sign-line"></div>
+            <p>Firma de Conformidad</p>
+          </div>
         </div>
       </div>
-    </div>
-    <div class="dialog-actions cert-actions">
-      <button id="btn-close-cert" class="button secondary" type="button">Cerrar</button>
-      <button id="btn-print-window" class="button primary" type="button">Imprimir Documento</button>
+
+      <div class="cert-actions">
+        <button id="btn-close-cert" class="button secondary" type="button">Cerrar</button>
+        <button id="btn-print-window" class="button primary" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" aria-hidden="true"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          <span>Imprimir Documento</span>
+        </button>
+      </div>
     </div>
   </dialog>
 </body>
