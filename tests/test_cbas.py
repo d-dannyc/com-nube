@@ -314,11 +314,30 @@ class CbasTests(unittest.TestCase):
         self.assertIn('departamentos', res_analytics.json)
         self.assertIn('riesgos', res_analytics.json)
 
+        # Probar metadatos analíticos enriquecidos por versión
+        res_diff = self.client.get('/api/files/demo.txt/diff')
+        self.assertEqual(res_diff.status_code, 200)
+        self.assertIn('metadatos_analiticos', res_diff.json)
+        self.assertIn('resumen_estructural', res_diff.json['metadatos_analiticos'])
+
         # Probar guardado directo desde editor web
         with patch.object(agent, 'subir_version_archivo', side_effect=self.cloud_result):
             res_save = self.client.post('/api/files/demo.txt/save-content', json={'contenido_texto': 'linea nueva\n'})
             self.assertEqual(res_save.status_code, 200)
         self.assertEqual((self.root / 'demo.txt').read_text(), 'linea nueva\n')
+
+        # Probar diagnóstico de integridad real
+        res_diag = self.client.get('/api/diagnostic/integrity')
+        self.assertEqual(res_diag.status_code, 200)
+        self.assertTrue(res_diag.json['ok'])
+        self.assertIn('total_archivos', res_diag.json)
+        self.assertIn('integros', res_diag.json)
+
+        # Probar prueba asistida de recuperación (alias diagnostic)
+        with patch.object(agent, 'subir_version_archivo', side_effect=self.cloud_result):
+            res_rec = self.client.post('/api/diagnostic/recovery-test', json={'nombre_archivo': 'demo.txt', 'modo': 'alterar'})
+            self.assertEqual(res_rec.status_code, 200)
+            self.assertEqual(res_rec.json['modo'], 'simular')
 
 
 if __name__ == '__main__':

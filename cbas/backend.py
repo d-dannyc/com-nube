@@ -46,6 +46,7 @@ from cbas.dropbox_service import (
     descargar_bytes_version,
     restaurar_version_en_carpeta,
 )
+from cbas.hasher import calcular_content_hash_dropbox
 from cbas.agent import (
     sincronizar_archivo_guardado,
     registrar_hash_sincronizado,
@@ -54,6 +55,7 @@ from cbas.agent import (
     bloqueo_archivo,
     confirmar_auditoria_pendiente,
     PENDIENTES_AUDITORIA,
+    obtener_nombre_relativo,
 )
 
 app = Flask(__name__, template_folder="templates")
@@ -192,6 +194,58 @@ def obtener_texto_de_version(version_dict: dict) -> str | None:
         return texto
     except Exception:
         raise RuntimeError('No se pudo recuperar el contenido de esta revisión.') from None
+
+
+def analizar_metadatos_empresariales(nombre_archivo: str, texto: str | None, tamano_bytes: int) -> dict:
+    """Extrae metadatos analíticos y de negocio específicos según la estructura del documento."""
+    ext = Path(nombre_archivo).suffix.lower()
+    metricas = {
+        "tipo_archivo": ext or "sin_extension",
+        "tamano_formateado": f"{tamano_bytes} bytes",
+        "resumen_estructural": f"Binario ({tamano_bytes} bytes)",
+    }
+    if not texto:
+        return metricas
+
+    lineas = texto.splitlines()
+    palabras = len(texto.split())
+    metricas["total_lineas"] = len(lineas)
+    metricas["total_palabras"] = palabras
+
+    if ext == ".csv":
+        try:
+            import csv
+            lector = list(csv.reader(lineas))
+            if lector:
+                columnas = len(lector[0])
+                encabezados = [c.strip() for c in lector[0][:6] if c.strip()]
+                filas_datos = max(0, len(lector) - 1)
+                metricas["filas_datos"] = filas_datos
+                metricas["columnas"] = columnas
+                metricas["resumen_estructural"] = f"CSV: {filas_datos} filas x {columnas} cols ({', '.join(encabezados)})"
+        except Exception:
+            metricas["resumen_estructural"] = f"CSV: {len(lineas)} líneas"
+    elif ext == ".json":
+        try:
+            parsed = json.loads(texto)
+            if isinstance(parsed, dict):
+                claves = list(parsed.keys())
+                metricas["campos_json"] = len(claves)
+                metricas["resumen_estructural"] = f"JSON válido ({len(claves)} claves: {', '.join(claves[:5])}...)"
+            elif isinstance(parsed, list):
+                metricas["elementos_json"] = len(parsed)
+                metricas["resumen_estructural"] = f"JSON válido: arreglo de {len(parsed)} elementos"
+        except Exception:
+            metricas["resumen_estructural"] = "JSON (sintaxis no estándar)"
+    elif ext == ".docx":
+        metricas["resumen_estructural"] = f"Word: ~{palabras} palabras, {len(lineas)} párrafos"
+    elif ext == ".md":
+        secciones = len([l for l in lineas if l.strip().startswith('#')])
+        metricas["resumen_estructural"] = f"Markdown: {secciones} secciones, ~{palabras} palabras"
+    else:
+        metricas["resumen_estructural"] = f"Texto: {len(lineas)} líneas, ~{palabras} palabras"
+
+    return metricas
 
 
 @app.route("/")
@@ -333,6 +387,7 @@ def api_comparar_version_archivo(nombre_archivo: str):
             ),
             "contenido_texto": texto_objetivo,
             "tipo_vista_previa": 'docx' if es_docx else 'texto' if es_texto else None,
+            "metadatos_analiticos": analizar_metadatos_empresariales(nombre_archivo, texto_objetivo, ver_objetivo["tamano_bytes"]),
             "diff": resultado_diff,
         }
     )
@@ -496,17 +551,16 @@ def api_organizar_departamentos():
     for p in list(MONITORED_DIR.iterdir()):
         if p.is_file() and not es_archivo_temporal_o_ignorado(p):
             depto = inferir_departamento(p.name)
-            if depto != "General":
-                destino_dir = MONITORED_DIR / depto
-                destino_dir.mkdir(parents=True, exist_ok=True)
-                nuevo_path = destino_dir / p.name
-                if not nuevo_path.exists():
-                    p.rename(nuevo_path)
-                    sincronizar_archivo_guardado(
-                        nuevo_path,
-                        detalle_personalizado=f"Organizado automáticamente en departamento {depto}"
-                    )
-                    organizados.append({"archivo": p.name, "nuevo_destino": f"{depto}/{p.name}"})
+            destino_dir = MONITORED_DIR / depto
+            destino_dir.mkdir(parents=True, exist_ok=True)
+            nuevo_path = destino_dir / p.name
+            if not nuevo_path.exists():
+                p.rename(nuevo_path)
+                sincronizar_archivo_guardado(
+                    nuevo_path,
+                    detalle_personalizado=f"Organizado automáticamente en departamento {depto}"
+                )
+                organizados.append({"archivo": p.name, "nuevo_destino": f"{depto}/{p.name}"})
     return jsonify({"ok": True, "organizados": organizados, "total": len(organizados)})
 
 
@@ -517,16 +571,84 @@ def api_analitica_metadatos():
     return jsonify(datos)
 
 
+@app.route("/api/diagnostic/integrity", methods=["GET"])
+def api_diagnostico_integridad():
+    """Verifica la integridad de cada archivo local comparando su hash de 4MB con el registrado en Dropbox."""
+    archivos = []
+    total_integros = 0
+    total_discrepancias = 0
+
+    if MONITORED_DIR.exists():
+        for ruta in sorted(MONITORED_DIR.rglob("*")):
+            if ruta.is_file() and not es_archivo_temporal_o_ignorado(ruta):
+                rel_name = obtener_nombre_relativo(ruta)
+                try:
+                    hash_local = calcular_content_hash_dropbox(ruta)
+                    tamano = ruta.stat().st_size
+                    registro = obtener_archivo_por_nombre(rel_name)
+                    if registro:
+                        hash_cloud = registro.get("content_hash_actual")
+                        rev_dropbox = registro.get("rev_actual")
+                        version = registro.get("version_actual")
+                        departamento = registro.get("departamento", "General")
+                        if hash_local == hash_cloud:
+                            estado = "INTEGRO"
+                            total_integros += 1
+                        else:
+                            estado = "DISCREPANCIA"
+                            total_discrepancias += 1
+                    else:
+                        hash_cloud = None
+                        rev_dropbox = None
+                        version = None
+                        departamento = inferir_departamento(rel_name)
+                        estado = "PENDIENTE_SINCRONIZACION"
+                        total_discrepancias += 1
+
+                    archivos.append({
+                        "nombre_archivo": rel_name,
+                        "departamento": departamento,
+                        "estado": estado,
+                        "hash_local": hash_local,
+                        "hash_cloud": hash_cloud,
+                        "rev_dropbox": rev_dropbox,
+                        "version_actual": version,
+                        "tamano_bytes": tamano,
+                    })
+                except Exception as e:
+                    archivos.append({
+                        "nombre_archivo": rel_name,
+                        "departamento": inferir_departamento(rel_name),
+                        "estado": "ERROR_LECTURA",
+                        "error": str(e),
+                    })
+                    total_discrepancias += 1
+
+    return jsonify({
+        "ok": True,
+        "total_archivos": len(archivos),
+        "integros": total_integros,
+        "discrepancias": total_discrepancias,
+        "archivos": archivos,
+    })
+
+
+@app.route("/api/diagnostic/recovery-test", methods=["POST"])
 @app.route("/api/simulator/ransomware", methods=["POST"])
 def api_simulador_ransomware():
-    """Escenario de prueba interactiva para defensas y ferias: Simula ataque y rollback."""
+    """Prueba asistida de recuperación ante corrupción o alteración no autorizada."""
     datos = request.get_json(silent=True) or {}
     nombre_archivo = datos.get("nombre_archivo")
-    modo = datos.get("modo", "simular")
+    modo = datos.get("modo", "alterar" if request.path.endswith("recovery-test") else "simular")
+    if modo == "alterar":
+        modo = "simular"
+    elif modo == "restaurar":
+        modo = "rollback"
+
     if not nombre_archivo:
         archivos = listar_archivos_monitoreados()
         if not archivos:
-            return jsonify(error="No hay archivos disponibles para la simulación."), 400
+            return jsonify(error="No hay archivos disponibles para la prueba de recuperación."), 400
         nombre_archivo = archivos[0]["nombre_archivo"]
 
     validar_nombre(nombre_archivo, MONITORED_DIR)
@@ -545,19 +667,19 @@ def api_simulador_ransomware():
         sincronizado = sincronizar_archivo_guardado(
             ruta_local,
             tipo_operacion_forzada="MODIFICADO",
-            detalle_personalizado="[SIMULACIÓN] Archivo alterado por ataque de Ransomware LockBit"
+            detalle_personalizado="[PRUEBA DE RECUPERACIÓN] Archivo alterado con firma de prueba (LOCKBIT)"
         )
         return jsonify({
             "ok": True,
             "modo": "simular",
             "nombre_archivo": nombre_archivo,
-            "mensaje": f"Archivo {nombre_archivo} alterado con firma de ransomware. Alerta forense generada.",
+            "mensaje": f"Archivo {nombre_archivo} alterado controladamente con firma de prueba. Se generó registro de auditoría.",
             "resultado": sincronizado
         })
     elif modo == "rollback":
         versiones = listar_versiones_de_archivo(nombre_archivo)
         if len(versiones) < 2:
-            return jsonify(error="Se requieren al menos 2 versiones para ejecutar un rollback."), 400
+            return jsonify(error="Se requieren al menos 2 versiones para ejecutar la recuperación."), 400
         version_limpia = None
         for v in versiones[1:]:
             if v.get("nivel_riesgo") != "CRITICO":
@@ -566,22 +688,24 @@ def api_simulador_ransomware():
         if not version_limpia:
             version_limpia = versiones[-1]
 
-        resultado_restore = _restaurar_version(
-            nombre_archivo,
-            version_limpia["rev_dropbox"],
-            version_limpia["numero_version"],
-            bool(version_limpia["es_texto"])
-        )
+        with bloqueo_archivo(nombre_archivo):
+            confirmar_auditoria_pendiente(nombre_archivo)
+            resultado_restore = _restaurar_version(
+                nombre_archivo,
+                version_limpia["rev_dropbox"],
+                version_limpia["numero_version"],
+                bool(version_limpia["es_texto"])
+            )
         return jsonify({
             "ok": True,
             "modo": "rollback",
             "nombre_archivo": nombre_archivo,
             "version_restaurada": version_limpia["numero_version"],
-            "mensaje": f"Rollback ejecutado con éxito. Se recuperó la versión limpia v{version_limpia['numero_version']}.",
+            "mensaje": f"Recuperación ejecutada con éxito. Se restauró en disco la versión limpia v{version_limpia['numero_version']}.",
             "detalle": resultado_restore.get_json() if hasattr(resultado_restore, 'get_json') else resultado_restore
         })
     else:
-        return jsonify(error="Modo desconocido (use 'simular' o 'rollback')."), 400
+        return jsonify(error="Modo desconocido (use 'alterar'/'simular' o 'restaurar'/'rollback')."), 400
 
 
 @app.route("/api/activity", methods=["GET"])

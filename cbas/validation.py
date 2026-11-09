@@ -16,13 +16,13 @@ def inferir_departamento(ruta_relativa: str) -> str:
         return primer_segmento.replace(" ", "_")
 
     nombre_bajo = Path(ruta_norm).name.lower()
-    if any(k in nombre_bajo for k in ["balance", "contab", "factura", "asiento", "iva", "libro", "fiscal"]):
+    if any(k in nombre_bajo for k in ["balance", "contab", "factura", "asiento", "iva", "libro", "fiscal", "cuenta", "gasto", "ingreso"]):
         return "Contabilidad"
-    if any(k in nombre_bajo for k in ["sueldo", "planilla", "rrhh", "empleado", "nomina", "personal"]):
+    if any(k in nombre_bajo for k in ["sueldo", "planilla", "rrhh", "empleado", "nomina", "personal", "vacacion", "memorandum", "rr_hh"]):
         return "Recursos_Humanos"
-    if any(k in nombre_bajo for k in ["contrato", "acta", "legal", "proveedor", "licencia", "nda", "acuerdo"]):
+    if any(k in nombre_bajo for k in ["contrato", "acta", "legal", "proveedor", "licencia", "nda", "acuerdo", "estatuto", "poder"]):
         return "Legal"
-    if any(k in nombre_bajo for k in ["erp", "config", "sistema", "it", "red", "backup", ".json", ".sql", ".py", ".sh"]):
+    if any(k in nombre_bajo for k in ["erp", "config", "sistema", "it", "red", "backup", "nube", "cloud", "infra", "servidor", "ti", ".json", ".sql", ".py", ".sh"]):
         return "Sistemas_TI"
     return "General"
 
